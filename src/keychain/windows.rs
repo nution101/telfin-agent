@@ -7,7 +7,7 @@ use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::ERROR_NOT_FOUND;
 #[cfg(target_os = "windows")]
 use windows::Win32::Security::Credentials::{
-    CredDeleteW, CredReadW, CredWriteW, CREDENTIALW, CREDENTIAL_ATTRIBUTEW,
+    CredDeleteW, CredReadW, CredWriteW, CREDENTIALW, CRED_FLAGS,
     CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC,
 };
 
@@ -38,7 +38,7 @@ impl KeychainProvider for WindowsKeychain {
         let token_bytes = token.as_bytes();
 
         let mut credential = CREDENTIALW {
-            Flags: 0,
+            Flags: CRED_FLAGS(0),
             Type: CRED_TYPE_GENERIC,
             TargetName: PWSTR(target_name.as_ptr() as *mut u16),
             Comment: PWSTR(ptr::null_mut()),
@@ -53,7 +53,7 @@ impl KeychainProvider for WindowsKeychain {
         };
 
         unsafe {
-            CredWriteW(&mut credential, 0)
+            CredWriteW(&mut credential, CRED_FLAGS(0))
                 .map_err(|e| AgentError::KeychainError(format!("Failed to save token: {}", e)))?;
         }
 

@@ -32,11 +32,10 @@ jobs:
             os: macos-latest
             name: telfin-darwin-arm64
             use_cross: false
-          # Windows disabled until keychain code is fixed
-          # - target: x86_64-pc-windows-msvc
-          #   os: windows-latest
-          #   name: telfin-windows-amd64
-          #   use_cross: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            name: telfin-windows-amd64
+            use_cross: false
 
     steps:
       - uses: actions/checkout@v4
