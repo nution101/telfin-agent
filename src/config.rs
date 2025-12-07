@@ -5,7 +5,7 @@ use std::path::PathBuf;
 /// Application configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    /// Server URL (default: https://app.telfin.io)
+    /// Server URL (default: https://gateway.telfin.io)
     pub server_url: String,
     /// Machine name (defaults to hostname)
     pub machine_name: String,
@@ -24,7 +24,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            server_url: "https://app.telfin.io".to_string(),
+            server_url: "https://gateway.telfin.io".to_string(),
             machine_name: crate::fingerprint::get_device_name(),
             reconnect_interval: 5,
             heartbeat_interval: 30,
@@ -111,7 +111,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = Config::default();
-        assert_eq!(config.server_url, "https://app.telfin.io");
+        assert_eq!(config.server_url, "https://gateway.telfin.io");
         assert!(!config.machine_name.is_empty());
         assert_eq!(config.reconnect_interval, 5);
         assert_eq!(config.heartbeat_interval, 30);
@@ -120,8 +120,7 @@ mod tests {
     #[test]
     fn test_websocket_url() {
         let mut config = Config::default();
-        config.server_url = "https://app.telfin.io".to_string();
-        assert_eq!(config.websocket_url(), "wss://app.telfin.io");
+        assert_eq!(config.websocket_url(), "wss://gateway.telfin.io");
 
         config.server_url = "http://localhost:3000".to_string();
         assert_eq!(config.websocket_url(), "ws://localhost:3000");
@@ -129,8 +128,7 @@ mod tests {
 
     #[test]
     fn test_api_url() {
-        let mut config = Config::default();
-        config.server_url = "https://app.telfin.io".to_string();
-        assert_eq!(config.api_url(), "https://app.telfin.io/api");
+        let config = Config::default();
+        assert_eq!(config.api_url(), "https://gateway.telfin.io/api");
     }
 }
