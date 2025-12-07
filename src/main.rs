@@ -49,6 +49,11 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install rustls crypto provider (required for TLS)
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+
     // Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter(
