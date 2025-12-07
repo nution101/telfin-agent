@@ -85,9 +85,25 @@ async fn main() -> Result<()> {
                 config.machine_name = name;
             }
 
-            // Get access token from keychain, auto-login if not logged in
+            // Get access token from keychain, validate it, auto-login if missing or expired
             let access_token = match keychain::get_token_async().await? {
-                Some(token) => token,
+                Some(token) => {
+                    // Validate token BEFORE claiming authenticated
+                    if auth::validate_token_locally(&token).is_ok() {
+                        tracing::debug!("Existing token is valid");
+                        token
+                    } else {
+                        // Token expired - delete and re-authenticate automatically
+                        tracing::info!("Token expired, starting fresh authentication");
+                        keychain::delete_token_async().await.ok();
+                        println!("Session expired. Starting authentication...\n");
+                        auth::device_code_flow(&server).await?;
+                        println!("\n✓ Login successful!\n");
+                        keychain::get_token_async()
+                            .await?
+                            .ok_or(error::AgentError::NotLoggedIn)?
+                    }
+                }
                 None => {
                     println!("Not logged in. Starting authentication...\n");
                     auth::device_code_flow(&server).await?;
@@ -97,20 +113,6 @@ async fn main() -> Result<()> {
                         .ok_or(error::AgentError::NotLoggedIn)?
                 }
             };
-
-            // Validate token before use
-            match auth::validate_token_locally(&access_token) {
-                Ok(claims) => {
-                    tracing::debug!("Token valid, expires at {}", claims.exp);
-                }
-                Err(e) => {
-                    tracing::error!("Token validation failed: {}", e);
-                    keychain::delete_token_async().await.ok();
-                    return Err(error::AgentError::AuthError(
-                        "Token is invalid or expired. Please run 'telfin login' again.".to_string(),
-                    ));
-                }
-            }
 
             // Check if token is expiring soon (within 5 minutes)
             if auth::token_expiring_soon(&access_token, 300) {
@@ -169,11 +171,23 @@ async fn main() -> Result<()> {
             let mut config = config::Config::load()?;
             config.server_url = server.clone();
 
-            // Step 1: Check if logged in, auto-login if needed
+            // Step 1: Check if logged in with VALID token, auto-login if missing or expired
             let access_token = match keychain::get_token_async().await? {
                 Some(token) => {
-                    println!("Step 1/4: Already authenticated ✓\n");
-                    token
+                    // Validate token BEFORE claiming authenticated
+                    if auth::validate_token_locally(&token).is_ok() {
+                        println!("Step 1/4: Already authenticated ✓\n");
+                        token
+                    } else {
+                        // Token expired - delete and re-authenticate automatically
+                        keychain::delete_token_async().await.ok();
+                        println!("Step 1/4: Session expired, re-authenticating...\n");
+                        auth::device_code_flow(&server).await?;
+                        println!("\n✓ Authentication complete!\n");
+                        keychain::get_token_async()
+                            .await?
+                            .ok_or(error::AgentError::NotLoggedIn)?
+                    }
                 }
                 None => {
                     println!("Step 1/4: Authentication required\n");
@@ -184,15 +198,6 @@ async fn main() -> Result<()> {
                         .ok_or(error::AgentError::NotLoggedIn)?
                 }
             };
-
-            // Validate token
-            if let Err(e) = auth::validate_token_locally(&access_token) {
-                keychain::delete_token_async().await.ok();
-                return Err(error::AgentError::AuthError(format!(
-                    "Token invalid: {}. Please run 'telfin install' again.",
-                    e
-                )));
-            }
 
             // Step 2: Test gateway connection
             println!("Step 2/4: Verifying gateway connection...");
