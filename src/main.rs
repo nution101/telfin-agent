@@ -79,8 +79,7 @@ async fn main() -> Result<()> {
             let fingerprint = fingerprint::generate()?;
 
             // Create and run agent
-            let mut agent =
-                agent::Agent::new(config.clone(), token, fingerprint)?;
+            let mut agent = agent::Agent::new(config.clone(), token, fingerprint)?;
 
             // Handle graceful shutdown
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);

@@ -12,12 +12,12 @@ pub trait KeychainProvider: Send + Sync {
     fn delete_token(&self) -> Result<()>;
 }
 
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "windows")]
 mod windows;
-#[cfg(target_os = "linux")]
-mod linux;
 
 /// Get the appropriate keychain provider for the current platform
 pub fn get_provider() -> Box<dyn KeychainProvider> {

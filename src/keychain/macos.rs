@@ -1,6 +1,8 @@
 use crate::error::{AgentError, Result};
 use crate::keychain::{KeychainProvider, ACCOUNT_NAME, SERVICE_NAME};
-use security_framework::passwords::{delete_generic_password, get_generic_password, set_generic_password};
+use security_framework::passwords::{
+    delete_generic_password, get_generic_password, set_generic_password,
+};
 
 pub struct MacOSKeychain;
 
@@ -25,8 +27,9 @@ impl KeychainProvider for MacOSKeychain {
     fn get_token(&self) -> Result<Option<String>> {
         match get_generic_password(SERVICE_NAME, ACCOUNT_NAME) {
             Ok(password) => {
-                let token = String::from_utf8(password.to_vec())
-                    .map_err(|e| AgentError::KeychainError(format!("Invalid token encoding: {}", e)))?;
+                let token = String::from_utf8(password.to_vec()).map_err(|e| {
+                    AgentError::KeychainError(format!("Invalid token encoding: {}", e))
+                })?;
                 Ok(Some(token))
             }
             Err(_) => Ok(None),
@@ -41,7 +44,10 @@ impl KeychainProvider for MacOSKeychain {
                 if e.to_string().contains("not found") {
                     Ok(())
                 } else {
-                    Err(AgentError::KeychainError(format!("Failed to delete token: {}", e)))
+                    Err(AgentError::KeychainError(format!(
+                        "Failed to delete token: {}",
+                        e
+                    )))
                 }
             }
         }

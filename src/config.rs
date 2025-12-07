@@ -64,8 +64,9 @@ impl Config {
 
     /// Get the config file path
     pub fn config_file_path() -> Result<PathBuf> {
-        let config_dir = dirs::config_dir()
-            .ok_or_else(|| AgentError::ConfigError("Could not find config directory".to_string()))?;
+        let config_dir = dirs::config_dir().ok_or_else(|| {
+            AgentError::ConfigError("Could not find config directory".to_string())
+        })?;
 
         Ok(config_dir.join("telfin").join("config.json"))
     }
@@ -88,7 +89,9 @@ impl Config {
 
     /// Get WebSocket URL
     pub fn websocket_url(&self) -> String {
-        self.server_url.replace("https://", "wss://").replace("http://", "ws://")
+        self.server_url
+            .replace("https://", "wss://")
+            .replace("http://", "ws://")
     }
 
     /// Get API base URL

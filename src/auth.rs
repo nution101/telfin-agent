@@ -92,11 +92,20 @@ fn display_authorization_prompt(resp: &DeviceCodeResponse) {
     println!("║                 Device Authorization                      ║");
     println!("╟────────────────────────────────────────────────────────────╢");
     println!("║                                                            ║");
-    println!("║  1. Visit: {}                        ║", resp.verification_uri);
+    println!(
+        "║  1. Visit: {}                        ║",
+        resp.verification_uri
+    );
     println!("║                                                            ║");
-    println!("║  2. Enter code:  {}                            ║", resp.user_code);
+    println!(
+        "║  2. Enter code:  {}                            ║",
+        resp.user_code
+    );
     println!("║                                                            ║");
-    println!("║  Expires in {} minutes                                   ║", resp.expires_in / 60);
+    println!(
+        "║  Expires in {} minutes                                   ║",
+        resp.expires_in / 60
+    );
     println!("║                                                            ║");
     println!("╚════════════════════════════════════════════════════════════╝\n");
 }

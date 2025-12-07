@@ -93,28 +93,36 @@ impl Agent {
         // Extract host from URL for Host header
         let url = url::Url::parse(&ws_url)
             .map_err(|e| AgentError::ConfigError(format!("Invalid WebSocket URL: {}", e)))?;
-        let host = url.host_str()
+        let host = url
+            .host_str()
             .ok_or_else(|| AgentError::ConfigError("WebSocket URL missing host".to_string()))?;
-        let port = url.port_or_known_default()
+        let port = url
+            .port_or_known_default()
             .ok_or_else(|| AgentError::ConfigError("WebSocket URL missing port".to_string()))?;
-        let host_header = if (url.scheme() == "wss" && port == 443) || (url.scheme() == "ws" && port == 80) {
-            host.to_string()
-        } else {
-            format!("{}:{}", host, port)
-        };
+        let host_header =
+            if (url.scheme() == "wss" && port == 443) || (url.scheme() == "ws" && port == 80) {
+                host.to_string()
+            } else {
+                format!("{}:{}", host, port)
+            };
 
         // Build WebSocket request with Authorization header
         tracing::info!("Connecting to gateway...");
         let request = Request::builder()
             .uri(&ws_url)
             .header("Authorization", format!("Bearer {}", self.token))
-            .header("Sec-WebSocket-Key", tokio_tungstenite::tungstenite::handshake::client::generate_key())
+            .header(
+                "Sec-WebSocket-Key",
+                tokio_tungstenite::tungstenite::handshake::client::generate_key(),
+            )
             .header("Sec-WebSocket-Version", "13")
             .header("Connection", "Upgrade")
             .header("Upgrade", "websocket")
             .header("Host", host_header)
             .body(())
-            .map_err(|e| AgentError::ConfigError(format!("Failed to build WebSocket request: {}", e)))?;
+            .map_err(|e| {
+                AgentError::ConfigError(format!("Failed to build WebSocket request: {}", e))
+            })?;
 
         let (ws_stream, _) = connect_async(request).await?;
         tracing::info!("Connected to gateway");
@@ -239,13 +247,21 @@ impl Agent {
                 for arg in &parts[1..] {
                     cmd.arg(arg);
                 }
-                tracing::info!("Starting session {} with configured shell: {}", session_id, shell_cmd);
+                tracing::info!(
+                    "Starting session {} with configured shell: {}",
+                    session_id,
+                    shell_cmd
+                );
                 cmd
             }
             None => {
                 // Use system default shell
                 let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
-                tracing::info!("Starting session {} with default shell: {}", session_id, shell);
+                tracing::info!(
+                    "Starting session {} with default shell: {}",
+                    session_id,
+                    shell
+                );
                 CommandBuilder::new(shell)
             }
         };
@@ -279,8 +295,15 @@ impl Agent {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let msg = Message::new(MessageType::TerminalOutput, session_id, buf[..n].to_vec());
-                        if tx_output.blocking_send(WsMessage::Binary(msg.encode())).is_err() {
+                        let msg = Message::new(
+                            MessageType::TerminalOutput,
+                            session_id,
+                            buf[..n].to_vec(),
+                        );
+                        if tx_output
+                            .blocking_send(WsMessage::Binary(msg.encode()))
+                            .is_err()
+                        {
                             break;
                         }
                     }
@@ -347,7 +370,12 @@ impl Agent {
         // Send resize event (currently not fully implemented)
         let _ = session.resize_tx.try_send((cols, rows));
 
-        tracing::debug!("Resize signal sent for session {} to {}x{}", session_id, cols, rows);
+        tracing::debug!(
+            "Resize signal sent for session {} to {}x{}",
+            session_id,
+            cols,
+            rows
+        );
         Ok(())
     }
 

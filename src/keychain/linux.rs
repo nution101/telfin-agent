@@ -30,18 +30,19 @@ impl KeychainProvider for LinuxKeychain {
         // Note: This is a synchronous operation that will block.
         // The KeychainProvider trait is sync, but callers should wrap this
         // in tokio::task::spawn_blocking when calling from async context.
-        let ss = SecretService::connect(EncryptionType::Dh)
-            .map_err(|e| AgentError::KeychainError(format!("Failed to connect to secret service: {}", e)))?;
+        let ss = SecretService::connect(EncryptionType::Dh).map_err(|e| {
+            AgentError::KeychainError(format!("Failed to connect to secret service: {}", e))
+        })?;
 
-        let collection = ss
-            .get_default_collection()
-            .map_err(|e| AgentError::KeychainError(format!("Failed to get default collection: {}", e)))?;
+        let collection = ss.get_default_collection().map_err(|e| {
+            AgentError::KeychainError(format!("Failed to get default collection: {}", e))
+        })?;
 
         // Unlock collection if needed
         if collection.is_locked().unwrap_or(false) {
-            collection
-                .unlock()
-                .map_err(|e| AgentError::KeychainError(format!("Failed to unlock collection: {}", e)))?;
+            collection.unlock().map_err(|e| {
+                AgentError::KeychainError(format!("Failed to unlock collection: {}", e))
+            })?;
         }
 
         let attributes = Self::get_attributes();
@@ -71,18 +72,19 @@ impl KeychainProvider for LinuxKeychain {
     fn get_token(&self) -> Result<Option<String>> {
         // Note: This is a synchronous operation that will block.
         // Callers should wrap in tokio::task::spawn_blocking when calling from async context.
-        let ss = SecretService::connect(EncryptionType::Dh)
-            .map_err(|e| AgentError::KeychainError(format!("Failed to connect to secret service: {}", e)))?;
+        let ss = SecretService::connect(EncryptionType::Dh).map_err(|e| {
+            AgentError::KeychainError(format!("Failed to connect to secret service: {}", e))
+        })?;
 
-        let collection = ss
-            .get_default_collection()
-            .map_err(|e| AgentError::KeychainError(format!("Failed to get default collection: {}", e)))?;
+        let collection = ss.get_default_collection().map_err(|e| {
+            AgentError::KeychainError(format!("Failed to get default collection: {}", e))
+        })?;
 
         // Unlock collection if needed
         if collection.is_locked().unwrap_or(false) {
-            collection
-                .unlock()
-                .map_err(|e| AgentError::KeychainError(format!("Failed to unlock collection: {}", e)))?;
+            collection.unlock().map_err(|e| {
+                AgentError::KeychainError(format!("Failed to unlock collection: {}", e))
+            })?;
         }
 
         let attributes = Self::get_attributes();
@@ -109,26 +111,28 @@ impl KeychainProvider for LinuxKeychain {
     fn delete_token(&self) -> Result<()> {
         // Note: This is a synchronous operation that will block.
         // Callers should wrap in tokio::task::spawn_blocking when calling from async context.
-        let ss = SecretService::connect(EncryptionType::Dh)
-            .map_err(|e| AgentError::KeychainError(format!("Failed to connect to secret service: {}", e)))?;
+        let ss = SecretService::connect(EncryptionType::Dh).map_err(|e| {
+            AgentError::KeychainError(format!("Failed to connect to secret service: {}", e))
+        })?;
 
-        let collection = ss
-            .get_default_collection()
-            .map_err(|e| AgentError::KeychainError(format!("Failed to get default collection: {}", e)))?;
+        let collection = ss.get_default_collection().map_err(|e| {
+            AgentError::KeychainError(format!("Failed to get default collection: {}", e))
+        })?;
 
         // Unlock collection if needed
         if collection.is_locked().unwrap_or(false) {
-            collection
-                .unlock()
-                .map_err(|e| AgentError::KeychainError(format!("Failed to unlock collection: {}", e)))?;
+            collection.unlock().map_err(|e| {
+                AgentError::KeychainError(format!("Failed to unlock collection: {}", e))
+            })?;
         }
 
         let attributes = Self::get_attributes();
 
         if let Ok(items) = collection.search_items(attributes) {
             for item in items {
-                item.delete()
-                    .map_err(|e| AgentError::KeychainError(format!("Failed to delete item: {}", e)))?;
+                item.delete().map_err(|e| {
+                    AgentError::KeychainError(format!("Failed to delete item: {}", e))
+                })?;
             }
         }
 

@@ -80,8 +80,9 @@ impl KeychainProvider for WindowsKeychain {
                         credential.CredentialBlob,
                         credential.CredentialBlobSize as usize,
                     );
-                    let token = String::from_utf8(blob.to_vec())
-                        .map_err(|e| AgentError::KeychainError(format!("Invalid token encoding: {}", e)))?;
+                    let token = String::from_utf8(blob.to_vec()).map_err(|e| {
+                        AgentError::KeychainError(format!("Invalid token encoding: {}", e))
+                    })?;
 
                     // Free the credential
                     windows::Win32::Security::Credentials::CredFree(credential_ptr as *const _);
@@ -92,7 +93,10 @@ impl KeychainProvider for WindowsKeychain {
                     if e.code() == ERROR_NOT_FOUND.into() {
                         Ok(None)
                     } else {
-                        Err(AgentError::KeychainError(format!("Failed to read token: {}", e)))
+                        Err(AgentError::KeychainError(format!(
+                            "Failed to read token: {}",
+                            e
+                        )))
                     }
                 }
             }
@@ -110,7 +114,10 @@ impl KeychainProvider for WindowsKeychain {
                     if e.code() == ERROR_NOT_FOUND.into() {
                         Ok(())
                     } else {
-                        Err(AgentError::KeychainError(format!("Failed to delete token: {}", e)))
+                        Err(AgentError::KeychainError(format!(
+                            "Failed to delete token: {}",
+                            e
+                        )))
                     }
                 }
             }
@@ -119,16 +126,22 @@ impl KeychainProvider for WindowsKeychain {
 
     #[cfg(not(target_os = "windows"))]
     fn save_token(&self, _token: &str) -> Result<()> {
-        Err(AgentError::KeychainError("Not implemented for this platform".to_string()))
+        Err(AgentError::KeychainError(
+            "Not implemented for this platform".to_string(),
+        ))
     }
 
     #[cfg(not(target_os = "windows"))]
     fn get_token(&self) -> Result<Option<String>> {
-        Err(AgentError::KeychainError("Not implemented for this platform".to_string()))
+        Err(AgentError::KeychainError(
+            "Not implemented for this platform".to_string(),
+        ))
     }
 
     #[cfg(not(target_os = "windows"))]
     fn delete_token(&self) -> Result<()> {
-        Err(AgentError::KeychainError("Not implemented for this platform".to_string()))
+        Err(AgentError::KeychainError(
+            "Not implemented for this platform".to_string(),
+        ))
     }
 }
