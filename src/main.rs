@@ -70,23 +70,30 @@ async fn main() -> Result<()> {
         } => {
             // Load or create config
             let mut config = config::Config::load()?;
-            config.server_url = server;
+            config.server_url = server.clone();
 
             if let Some(name) = machine_name {
                 config.machine_name = name;
             }
 
-            // Get token from keychain
+            // Get access token from keychain
             let keychain = keychain::get_provider();
-            let token = keychain
+            let access_token = keychain
                 .get_token()?
                 .ok_or(error::AgentError::NotLoggedIn)?;
+
+            // Register machine with gateway to get agent token
+            let registration = auth::register_machine(
+                &server,
+                &access_token,
+                &config.machine_name,
+            ).await?;
 
             // Generate device fingerprint
             let fingerprint = fingerprint::generate()?;
 
-            // Create and run agent
-            let mut agent = agent::Agent::new(config.clone(), token, fingerprint)?;
+            // Create and run agent with agent token (not access token)
+            let mut agent = agent::Agent::new(config.clone(), registration.agent_token, fingerprint)?;
 
             // Handle graceful shutdown
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);

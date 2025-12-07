@@ -4,6 +4,7 @@ use crate::keychain;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use uuid::Uuid;
 
 #[derive(Debug, Serialize)]
 struct DeviceCodeRequest {
@@ -31,6 +32,31 @@ struct TokenRequest {
 struct TokenResponse {
     access_token: Option<String>,
     error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct RegisterMachineRequest {
+    name: String,
+    description: Option<String>,
+    hostname: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MachineInfo {
+    id: Uuid,
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RegisterMachineResponse {
+    machine: MachineInfo,
+    agent_token: String,
+}
+
+/// Result of machine registration
+pub struct MachineRegistration {
+    pub machine_id: Uuid,
+    pub agent_token: String,
 }
 
 /// Execute the device code authorization flow (RFC 8628)
@@ -189,6 +215,50 @@ async fn poll_for_token(
     }
 
     Err(AgentError::DeviceCodeExpired)
+}
+
+/// Register or get existing machine with the gateway
+/// Returns agent_token that can be used for WebSocket connection
+pub async fn register_machine(
+    server_url: &str,
+    access_token: &str,
+    machine_name: &str,
+) -> Result<MachineRegistration> {
+    let client = Client::new();
+    let api_url = format!("{}/api/machines", server_url);
+
+    tracing::info!("Registering machine with gateway...");
+
+    let request = RegisterMachineRequest {
+        name: machine_name.to_string(),
+        description: Some(format!("Telfin Agent on {}", fingerprint::get_os_type())),
+        hostname: Some(machine_name.to_string()),
+    };
+
+    let response = client
+        .post(&api_url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .json(&request)
+        .send()
+        .await?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(AgentError::AuthError(format!(
+            "Failed to register machine: {} - {}",
+            status, error_text
+        )));
+    }
+
+    let resp: RegisterMachineResponse = response.json().await?;
+
+    tracing::info!("Machine registered: {} ({})", resp.machine.name, resp.machine.id);
+
+    Ok(MachineRegistration {
+        machine_id: resp.machine.id,
+        agent_token: resp.agent_token,
+    })
 }
 
 #[cfg(test)]
