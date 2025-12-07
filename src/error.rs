@@ -46,6 +46,9 @@ pub enum AgentError {
     #[error("Rate limit exceeded")]
     RateLimited,
 
+    #[error("Connection error: {0}")]
+    ConnectionError(String),
+
     #[error("{0}")]
     Other(String),
 }

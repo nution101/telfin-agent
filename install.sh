@@ -74,14 +74,15 @@ install() {
         sudo chmod +x "$INSTALL_DIR/$BINARY_NAME"
     fi
     
-    info "Installation complete!"
+    info "Binary installed to $INSTALL_DIR/$BINARY_NAME"
     echo ""
-    echo "Get started:"
-    echo "  telfin login    # Authenticate with your account"
-    echo "  telfin start    # Connect to gateway"
+
+    # Auto-run setup (login + install service + start)
+    info "Starting Telfin setup..."
     echo ""
-    echo "Run 'telfin --help' for all commands"
-    echo ""
+
+    # Run telfin install which handles: login -> install service -> start service
+    "$INSTALL_DIR/$BINARY_NAME" install
 }
 
 install

@@ -25,25 +25,28 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Authenticate with Telfin
+    /// Authenticate with Telfin (usually not needed - install/start auto-login)
     Login {
         #[arg(long, default_value = "https://gateway.telfin.io")]
         server: String,
     },
-    /// Start the agent daemon
+    /// Start the agent in foreground (use 'install' for background service)
     Start {
         #[arg(long)]
         machine_name: Option<String>,
         #[arg(long, default_value = "https://gateway.telfin.io")]
         server: String,
     },
-    /// Check agent status
+    /// Check agent status and connection info
     Status,
-    /// Logout and remove credentials
+    /// Logout and remove stored credentials
     Logout,
-    /// Install auto-start service
-    Install,
-    /// Uninstall auto-start service
+    /// Install and start as background service (recommended)
+    Install {
+        #[arg(long, default_value = "https://gateway.telfin.io")]
+        server: String,
+    },
+    /// Uninstall background service
     Uninstall,
 }
 
@@ -82,10 +85,18 @@ async fn main() -> Result<()> {
                 config.machine_name = name;
             }
 
-            // Get access token from keychain (using async wrapper for Linux compatibility)
-            let access_token = keychain::get_token_async()
-                .await?
-                .ok_or(error::AgentError::NotLoggedIn)?;
+            // Get access token from keychain, auto-login if not logged in
+            let access_token = match keychain::get_token_async().await? {
+                Some(token) => token,
+                None => {
+                    println!("Not logged in. Starting authentication...\n");
+                    auth::device_code_flow(&server).await?;
+                    println!("\n✓ Login successful!\n");
+                    keychain::get_token_async()
+                        .await?
+                        .ok_or(error::AgentError::NotLoggedIn)?
+                }
+            };
 
             // Validate token before use
             match auth::validate_token_locally(&access_token) {
@@ -119,6 +130,12 @@ async fn main() -> Result<()> {
             let mut agent =
                 agent::Agent::new(config.clone(), registration.agent_token, fingerprint)?;
 
+            // Check if service is installed, suggest install for persistent operation
+            if !service::is_installed() {
+                println!("\nTip: Run 'telfin install' to run in the background and auto-start on boot.");
+                println!("     Press Ctrl+C to stop this foreground session.\n");
+            }
+
             // Handle graceful shutdown
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
@@ -143,8 +160,79 @@ async fn main() -> Result<()> {
             println!("✓ Logged out successfully");
             Ok(())
         }
-        Commands::Install => {
+        Commands::Install { server } => {
+            println!("╔════════════════════════════════════════════════════════════╗");
+            println!("║              Telfin Agent Setup                            ║");
+            println!("╚════════════════════════════════════════════════════════════╝\n");
+
+            // Load config
+            let mut config = config::Config::load()?;
+            config.server_url = server.clone();
+
+            // Step 1: Check if logged in, auto-login if needed
+            let access_token = match keychain::get_token_async().await? {
+                Some(token) => {
+                    println!("Step 1/4: Already authenticated ✓\n");
+                    token
+                }
+                None => {
+                    println!("Step 1/4: Authentication required\n");
+                    auth::device_code_flow(&server).await?;
+                    println!("\n✓ Authentication complete!\n");
+                    keychain::get_token_async()
+                        .await?
+                        .ok_or(error::AgentError::NotLoggedIn)?
+                }
+            };
+
+            // Validate token
+            if let Err(e) = auth::validate_token_locally(&access_token) {
+                keychain::delete_token_async().await.ok();
+                return Err(error::AgentError::AuthError(format!(
+                    "Token invalid: {}. Please run 'telfin install' again.",
+                    e
+                )));
+            }
+
+            // Step 2: Test gateway connection
+            println!("Step 2/4: Verifying gateway connection...");
+            let registration =
+                auth::register_machine(&server, &access_token, &config.machine_name).await?;
+            let fp = fingerprint::generate()?;
+
+            // Quick connection test
+            let test_agent = agent::Agent::new(config.clone(), registration.agent_token, fp)?;
+            match test_agent.test_connection().await {
+                Ok(_) => println!("✓ Connected to gateway successfully!\n"),
+                Err(e) => {
+                    return Err(error::AgentError::ConnectionError(format!(
+                        "Failed to connect to gateway: {}. Check your network and try again.",
+                        e
+                    )));
+                }
+            }
+
+            // Step 3: Install the service
+            println!("Step 3/4: Installing background service...\n");
             service::install()?;
+
+            // Step 4: Auto-start the service
+            println!("\nStep 4/4: Starting service...");
+            if let Err(e) = service::start_service() {
+                tracing::warn!("Service installed but failed to start: {}", e);
+                println!("Note: Service will start automatically on next login/reboot");
+            }
+
+            println!("\n╔════════════════════════════════════════════════════════════╗");
+            println!("║              Setup Complete!                               ║");
+            println!("╟────────────────────────────────────────────────────────────╢");
+            println!("║  Your machine is now connected to Telfin.                  ║");
+            println!("║  The agent will run in the background and auto-start.     ║");
+            println!("║                                                            ║");
+            println!("║  Commands:                                                 ║");
+            println!("║    telfin status     - Check connection status             ║");
+            println!("║    telfin uninstall  - Remove background service           ║");
+            println!("╚════════════════════════════════════════════════════════════╝\n");
             Ok(())
         }
         Commands::Uninstall => {

@@ -2,6 +2,118 @@ use crate::error::{AgentError, Result};
 use std::fs;
 use std::process::Command;
 
+/// Check if the service is already installed
+pub fn is_installed() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let home_dir = match dirs::home_dir() {
+            Some(d) => d,
+            None => return false,
+        };
+        home_dir
+            .join(".config")
+            .join("systemd")
+            .join("user")
+            .join("telfin-agent.service")
+            .exists()
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let home_dir = match dirs::home_dir() {
+            Some(d) => d,
+            None => return false,
+        };
+        home_dir
+            .join("Library")
+            .join("LaunchAgents")
+            .join("io.telfin.agent.plist")
+            .exists()
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // Check if scheduled task exists
+        let output = Command::new("schtasks")
+            .args(["/query", "/tn", "TelfinAgent"])
+            .output();
+        matches!(output, Ok(o) if o.status.success())
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        false
+    }
+}
+
+/// Start the installed service
+pub fn start_service() -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        let output = Command::new("systemctl")
+            .args(["--user", "start", "telfin-agent"])
+            .output()?;
+
+        if !output.status.success() {
+            return Err(AgentError::Other(format!(
+                "Failed to start service: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+        println!("✓ Telfin agent service started");
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let home_dir = dirs::home_dir()
+            .ok_or_else(|| AgentError::ConfigError("Could not determine home directory".to_string()))?;
+        let plist_file = home_dir
+            .join("Library")
+            .join("LaunchAgents")
+            .join("io.telfin.agent.plist");
+
+        // launchctl load also starts the service if RunAtLoad is true
+        // But if it's already loaded, we need to kickstart it
+        let output = Command::new("launchctl")
+            .args(["kickstart", "-k", "gui/$UID/io.telfin.agent"])
+            .output();
+
+        // If kickstart fails, try load (might not be loaded yet)
+        if output.is_err() || !output.as_ref().unwrap().status.success() {
+            let _ = Command::new("launchctl")
+                .args(["load", plist_file.to_str().unwrap()])
+                .output()?;
+        }
+
+        println!("✓ Telfin agent service started");
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let output = Command::new("schtasks")
+            .args(["/run", "/tn", "TelfinAgent"])
+            .output()?;
+
+        if !output.status.success() {
+            return Err(AgentError::Other(format!(
+                "Failed to start service: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+        println!("✓ Telfin agent service started");
+        Ok(())
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        Err(AgentError::Other(
+            "Service start not supported on this platform".to_string(),
+        ))
+    }
+}
+
 /// Install the service/daemon for auto-start on system boot
 pub fn install() -> Result<()> {
     #[cfg(target_os = "linux")]

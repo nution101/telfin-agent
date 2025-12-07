@@ -55,6 +55,75 @@ impl Agent {
         })
     }
 
+    /// Test connection to gateway without running the full event loop
+    /// Returns Ok(()) if connection succeeds, Err otherwise
+    pub async fn test_connection(&self) -> Result<()> {
+        // Build WebSocket URL
+        let ws_url = format!(
+            "{}/ws/agent?machine={}&fingerprint={}",
+            self.config.websocket_url(),
+            urlencoding::encode(&self.config.machine_name),
+            self.fingerprint
+        );
+
+        // Extract host from URL for Host header
+        let url = url::Url::parse(&ws_url)
+            .map_err(|e| AgentError::ConfigError(format!("Invalid WebSocket URL: {}", e)))?;
+        let host = url
+            .host_str()
+            .ok_or_else(|| AgentError::ConfigError("WebSocket URL missing host".to_string()))?;
+        let port = url
+            .port_or_known_default()
+            .ok_or_else(|| AgentError::ConfigError("WebSocket URL missing port".to_string()))?;
+        let host_header =
+            if (url.scheme() == "wss" && port == 443) || (url.scheme() == "ws" && port == 80) {
+                host.to_string()
+            } else {
+                format!("{}:{}", host, port)
+            };
+
+        // Build WebSocket request with Authorization header
+        let request = tokio_tungstenite::tungstenite::http::Request::builder()
+            .uri(&ws_url)
+            .header("Authorization", format!("Bearer {}", self.token))
+            .header(
+                "Sec-WebSocket-Key",
+                tokio_tungstenite::tungstenite::handshake::client::generate_key(),
+            )
+            .header("Sec-WebSocket-Version", "13")
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .header("Host", host_header)
+            .body(())
+            .map_err(|e| {
+                AgentError::ConfigError(format!("Failed to build WebSocket request: {}", e))
+            })?;
+
+        // Attempt connection with timeout
+        let connect_future = connect_async(request);
+        let timeout_duration = Duration::from_secs(10);
+
+        match tokio::time::timeout(timeout_duration, connect_future).await {
+            Ok(Ok((ws_stream, _))) => {
+                // Successfully connected, close cleanly
+                let (mut write, _read) = ws_stream.split();
+                let _ = write.close().await;
+                tracing::info!("Connection test successful");
+                Ok(())
+            }
+            Ok(Err(e)) => {
+                tracing::error!("Connection test failed: {}", e);
+                Err(AgentError::ConnectionError(e.to_string()))
+            }
+            Err(_) => {
+                tracing::error!("Connection test timed out");
+                Err(AgentError::ConnectionError(
+                    "Connection timed out after 10 seconds".to_string(),
+                ))
+            }
+        }
+    }
+
     /// Run the agent with graceful shutdown support
     pub async fn run(&mut self, mut shutdown_rx: watch::Receiver<bool>) -> Result<()> {
         tracing::info!(
