@@ -32,6 +32,10 @@ jobs:
             os: macos-latest
             name: telfin-darwin-arm64
             use_cross: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            name: telfin-windows-amd64
+            use_cross: false
 
     steps:
       - uses: actions/checkout@v4
@@ -53,17 +57,27 @@ jobs:
         if: "!matrix.use_cross"
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Package binary
+      - name: Package binary (Unix)
+        if: runner.os != 'Windows'
         run: |
           cd target/${{ matrix.target }}/release
           chmod +x telfin-agent
           tar -czf ../../../${{ matrix.name }}.tar.gz telfin-agent
 
+      - name: Package binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cd target/${{ matrix.target }}/release
+          Compress-Archive -Path telfin-agent.exe -DestinationPath ../../../${{ matrix.name }}.zip
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
-          path: ${{ matrix.name }}.tar.gz
+          path: |
+            ${{ matrix.name }}.tar.gz
+            ${{ matrix.name }}.zip
 
   release:
     name: Create Release

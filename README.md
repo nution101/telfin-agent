@@ -38,6 +38,7 @@ telfin logout
 
 - Linux (x64, ARM64)
 - macOS (Intel, Apple Silicon)
+- Windows (x64)
 
 ## License
 
