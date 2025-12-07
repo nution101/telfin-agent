@@ -40,6 +40,12 @@ pub enum AgentError {
     #[error("Session not found: {0}")]
     SessionNotFound(u32),
 
+    #[error("Session error: {0}")]
+    SessionError(String),
+
+    #[error("Rate limit exceeded")]
+    RateLimited,
+
     #[error("{0}")]
     Other(String),
 }

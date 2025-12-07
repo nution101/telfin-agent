@@ -1,6 +1,7 @@
 use crate::error::{AgentError, Result};
 use crate::fingerprint;
 use crate::keychain;
+use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -265,6 +266,45 @@ pub async fn register_machine(
     })
 }
 
+#[derive(Debug, Deserialize)]
+pub struct TokenClaims {
+    pub exp: usize,
+    pub iat: usize,
+    pub sub: String,
+    #[serde(default)]
+    pub machine_id: Option<String>,
+}
+
+/// Validate JWT token structure and expiration (local validation only)
+/// Server validates signature - we check structure and expiration locally
+pub fn validate_token_locally(token: &str) -> Result<TokenClaims> {
+    let mut validation = Validation::new(Algorithm::HS256);
+    validation.insecure_disable_signature_validation();
+    validation.validate_exp = true;
+
+    let token_data = decode::<TokenClaims>(
+        token,
+        &DecodingKey::from_secret(&[]),
+        &validation,
+    )
+    .map_err(|e| AgentError::AuthError(format!("Invalid token: {}", e)))?;
+
+    Ok(token_data.claims)
+}
+
+/// Check if token is expiring within given seconds
+pub fn token_expiring_soon(token: &str, within_secs: u64) -> bool {
+    if let Ok(claims) = validate_token_locally(token) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or(std::time::Duration::ZERO)
+            .as_secs() as usize;
+        claims.exp < now + within_secs as usize
+    } else {
+        true // Treat invalid tokens as expiring
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,5 +320,94 @@ mod tests {
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("device_name"));
         assert!(json.contains("test-machine"));
+    }
+
+    #[test]
+    fn test_validate_expired_token() {
+        // Token with exp in the past (Jan 1, 2020)
+        let expired_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyMTIzIiwiZXhwIjoxNTc3ODM2ODAwLCJpYXQiOjE1Nzc4MzMyMDB9.fake";
+
+        let result = validate_token_locally(expired_token);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AgentError::AuthError(_)));
+    }
+
+    #[test]
+    fn test_validate_valid_token() {
+        // Token with exp in the future (year 2030)
+        let future_exp = 1893456000; // Jan 1, 2030
+        let past_iat = 1577836800; // Jan 1, 2020
+
+        // Minimal valid JWT structure (header.payload.signature)
+        use base64::Engine;
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"alg":"HS256","typ":"JWT"}"#);
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+            format!(
+                r#"{{"sub":"user123","exp":{},"iat":{}}}"#,
+                future_exp, past_iat
+            ),
+        );
+        let valid_token = format!("{}.{}.fake_signature", header, payload);
+
+        let result = validate_token_locally(&valid_token);
+        assert!(result.is_ok());
+        let claims = result.unwrap();
+        assert_eq!(claims.sub, "user123");
+        assert_eq!(claims.exp, future_exp);
+        assert_eq!(claims.iat, past_iat);
+    }
+
+    #[test]
+    fn test_token_expiring_soon() {
+        // Token expiring in 10 seconds
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as usize;
+        let soon_exp = now + 10;
+
+        use base64::Engine;
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"alg":"HS256","typ":"JWT"}"#);
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(format!(r#"{{"sub":"user123","exp":{},"iat":{}}}"#, soon_exp, now));
+        let token = format!("{}.{}.fake_signature", header, payload);
+
+        // Should be expiring within 60 seconds
+        assert!(token_expiring_soon(&token, 60));
+
+        // Should not be expiring within 5 seconds
+        assert!(!token_expiring_soon(&token, 5));
+    }
+
+    #[test]
+    fn test_token_expiring_soon_with_invalid_token() {
+        let invalid_token = "not.a.valid.jwt";
+
+        // Invalid tokens should be treated as expiring
+        assert!(token_expiring_soon(invalid_token, 60));
+    }
+
+    #[test]
+    fn test_token_claims_with_machine_id() {
+        let future_exp = 1893456000;
+        let past_iat = 1577836800;
+
+        use base64::Engine;
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"alg":"HS256","typ":"JWT"}"#);
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+            format!(
+                r#"{{"sub":"user123","exp":{},"iat":{},"machine_id":"machine456"}}"#,
+                future_exp, past_iat
+            ),
+        );
+        let token = format!("{}.{}.fake_signature", header, payload);
+
+        let result = validate_token_locally(&token);
+        assert!(result.is_ok());
+        let claims = result.unwrap();
+        assert_eq!(claims.machine_id, Some("machine456".to_string()));
     }
 }

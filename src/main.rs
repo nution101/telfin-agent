@@ -11,6 +11,7 @@ mod fingerprint;
 mod keychain;
 mod protocol;
 mod service;
+mod tls;
 
 use crate::error::Result;
 
@@ -82,6 +83,26 @@ async fn main() -> Result<()> {
                 .get_token()?
                 .ok_or(error::AgentError::NotLoggedIn)?;
 
+            // Validate token before use
+            match auth::validate_token_locally(&access_token) {
+                Ok(claims) => {
+                    tracing::debug!("Token valid, expires at {}", claims.exp);
+                }
+                Err(e) => {
+                    tracing::error!("Token validation failed: {}", e);
+                    keychain.delete_token().ok();
+                    return Err(error::AgentError::AuthError(
+                        "Token is invalid or expired. Please run 'telfin login' again."
+                            .to_string(),
+                    ));
+                }
+            }
+
+            // Check if token is expiring soon (within 5 minutes)
+            if auth::token_expiring_soon(&access_token, 300) {
+                tracing::warn!("Token will expire soon. Consider running 'telfin login' to refresh.");
+            }
+
             // Register machine with gateway to get agent token
             let registration =
                 auth::register_machine(&server, &access_token, &config.machine_name).await?;
@@ -131,9 +152,9 @@ async fn main() -> Result<()> {
 
 async fn check_status() -> Result<()> {
     let keychain = keychain::get_provider();
-    let has_token = keychain.get_token()?.is_some();
+    let token = keychain.get_token()?;
 
-    if has_token {
+    if let Some(token) = token {
         let config = config::Config::load()?;
         let fingerprint = fingerprint::generate()?;
 
@@ -141,6 +162,26 @@ async fn check_status() -> Result<()> {
         println!("Server: {}", config.server_url);
         println!("Machine: {}", config.machine_name);
         println!("Fingerprint: {}", &fingerprint[..16]);
+
+        // Show token expiration info
+        if let Ok(claims) = auth::validate_token_locally(&token) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as usize;
+            let remaining = claims.exp.saturating_sub(now);
+            let hours = remaining / 3600;
+            let minutes = (remaining % 3600) / 60;
+
+            println!("Token expires in: {}h {}m", hours, minutes);
+
+            if auth::token_expiring_soon(&token, 300) {
+                println!("⚠ Warning: Token expiring soon. Run 'telfin login' to refresh.");
+            }
+        } else {
+            println!("Token status: Invalid or expired");
+            println!("Run 'telfin login' to authenticate again");
+        }
     } else {
         println!("Status: Not logged in");
         println!("Run 'telfin login' to authenticate");

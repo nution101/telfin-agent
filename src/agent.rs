@@ -5,12 +5,18 @@ use futures_util::{SinkExt, StreamExt};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::collections::HashMap;
 use std::io::Read;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch, Mutex};
 use tokio::time::{interval, Duration};
 use tokio_tungstenite::tungstenite::http::Request;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
+
+const MAX_CONCURRENT_SESSIONS: usize = 10;
+const MESSAGE_BURST_LIMIT: usize = 100;
+const RATE_LIMIT_WINDOW_SECS: u64 = 1;
+const SESSION_IDLE_TIMEOUT_SECS: u64 = 3600;
 
 #[allow(dead_code)]
 type WsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
@@ -21,6 +27,8 @@ pub struct Agent {
     token: String,
     fingerprint: String,
     sessions: Arc<Mutex<HashMap<u32, Session>>>,
+    message_count: Arc<AtomicUsize>,
+    last_rate_reset: Arc<Mutex<std::time::Instant>>,
 }
 
 struct Session {
@@ -31,6 +39,7 @@ struct Session {
     _child: Box<dyn portable_pty::Child + Send + Sync>,
     reader_task: tokio::task::JoinHandle<()>,
     writer_task: tokio::task::JoinHandle<()>,
+    last_activity: std::time::Instant,
 }
 
 impl Agent {
@@ -41,6 +50,8 @@ impl Agent {
             token,
             fingerprint,
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            message_count: Arc::new(AtomicUsize::new(0)),
+            last_rate_reset: Arc::new(Mutex::new(std::time::Instant::now())),
         })
     }
 
@@ -53,6 +64,9 @@ impl Agent {
 
         let mut backoff = Duration::from_secs(1);
         let max_backoff = Duration::from_secs(60);
+        // Threshold for considering a connection "successful" - if we were connected
+        // for at least this long, reset the backoff on disconnect
+        let success_threshold = Duration::from_secs(10);
 
         loop {
             tokio::select! {
@@ -64,18 +78,28 @@ impl Agent {
                     }
                 }
                 result = self.connect_and_run() => {
-                    match result {
+                    let connection_duration = result.1;
+                    match result.0 {
                         Ok(_) => {
-                            tracing::info!("Connection closed cleanly");
+                            tracing::info!("Connection closed cleanly after {:?}", connection_duration);
                             backoff = Duration::from_secs(1);
                         }
                         Err(e) => {
-                            tracing::warn!("Connection error: {}", e);
-                            tracing::info!("Reconnecting in {:?}...", backoff);
-                            tokio::time::sleep(backoff).await;
-
-                            // Exponential backoff
-                            backoff = (backoff * 2).min(max_backoff);
+                            // If we were connected for a reasonable time, this was a working
+                            // connection that got disconnected (e.g., idle timeout) - reset backoff
+                            if connection_duration >= success_threshold {
+                                tracing::info!(
+                                    "Connection dropped after {:?} ({}), reconnecting immediately...",
+                                    connection_duration, e
+                                );
+                                backoff = Duration::from_secs(1);
+                            } else {
+                                tracing::warn!("Connection error after {:?}: {}", connection_duration, e);
+                                tracing::info!("Reconnecting in {:?}...", backoff);
+                                tokio::time::sleep(backoff).await;
+                                // Exponential backoff
+                                backoff = (backoff * 2).min(max_backoff);
+                            }
                         }
                     }
                 }
@@ -83,7 +107,18 @@ impl Agent {
         }
     }
 
-    async fn connect_and_run(&mut self) -> Result<()> {
+    /// Connect to gateway and run the event loop.
+    /// Returns (result, duration) where duration is how long the connection was active.
+    async fn connect_and_run(&mut self) -> (Result<()>, Duration) {
+        let start_time = std::time::Instant::now();
+
+        match self.connect_and_run_inner().await {
+            Ok(()) => (Ok(()), start_time.elapsed()),
+            Err(e) => (Err(e), start_time.elapsed()),
+        }
+    }
+
+    async fn connect_and_run_inner(&mut self) -> Result<()> {
         // Build WebSocket URL without sensitive token in query params
         let ws_url = format!(
             "{}/ws/agent?machine={}&fingerprint={}",
@@ -152,9 +187,15 @@ impl Agent {
             }
         });
 
+        // Idle session cleanup interval
+        let mut cleanup_interval = interval(Duration::from_secs(60));
+
         // Main event loop
         let result: Result<()> = loop {
             tokio::select! {
+                _ = cleanup_interval.tick() => {
+                    self.cleanup_idle_sessions().await;
+                }
                 Some(msg) = read.next() => {
                     match msg {
                         Ok(WsMessage::Binary(data)) => {
@@ -225,6 +266,19 @@ impl Agent {
     }
 
     async fn start_session(&mut self, session_id: u32, tx: mpsc::Sender<WsMessage>) -> Result<()> {
+        let sessions = self.sessions.lock().await;
+        if sessions.len() >= MAX_CONCURRENT_SESSIONS {
+            tracing::warn!(
+                "Session limit reached ({}), rejecting new session {}",
+                MAX_CONCURRENT_SESSIONS,
+                session_id
+            );
+            return Err(AgentError::SessionError(
+                "Maximum concurrent sessions reached".to_string(),
+            ));
+        }
+        drop(sessions);
+
         let pty_system = native_pty_system();
 
         let pair = pty_system
@@ -348,6 +402,7 @@ impl Agent {
             _child: child,
             reader_task,
             writer_task,
+            last_activity: std::time::Instant::now(),
         };
 
         self.sessions.lock().await.insert(session_id, session);
@@ -356,11 +411,37 @@ impl Agent {
         Ok(())
     }
 
+    async fn check_rate_limit(&self) -> Result<()> {
+        let mut last_reset = self.last_rate_reset.lock().await;
+        let now = std::time::Instant::now();
+
+        // Reset counter if window has passed
+        if now.duration_since(*last_reset).as_secs() >= RATE_LIMIT_WINDOW_SECS {
+            self.message_count.store(0, Ordering::SeqCst);
+            *last_reset = now;
+        }
+
+        // Check and increment atomically while still holding lock
+        let count = self.message_count.fetch_add(1, Ordering::SeqCst);
+        if count >= MESSAGE_BURST_LIMIT {
+            tracing::warn!("Rate limit exceeded: {} messages in window", count);
+            return Err(AgentError::RateLimited);
+        }
+
+        Ok(())
+        // Lock released here after both operations complete
+    }
+
     async fn handle_input(&mut self, session_id: u32, data: &[u8]) -> Result<()> {
-        let sessions = self.sessions.lock().await;
+        self.check_rate_limit().await?;
+
+        let mut sessions = self.sessions.lock().await;
         let session = sessions
-            .get(&session_id)
+            .get_mut(&session_id)
             .ok_or_else(|| AgentError::SessionNotFound(session_id))?;
+
+        // Update activity timestamp
+        session.last_activity = std::time::Instant::now();
 
         session
             .input_tx
@@ -403,6 +484,32 @@ impl Agent {
             tracing::info!("Session {} ended", session_id);
         }
         Ok(())
+    }
+
+    async fn cleanup_idle_sessions(&mut self) {
+        let mut sessions = self.sessions.lock().await;
+        let now = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(SESSION_IDLE_TIMEOUT_SECS);
+
+        let expired: Vec<u32> = sessions
+            .iter()
+            .filter(|(_, session)| now.duration_since(session.last_activity) > timeout)
+            .map(|(id, _)| *id)
+            .collect();
+
+        for session_id in expired {
+            if let Some(session) = sessions.remove(&session_id) {
+                tracing::info!(
+                    "Closing idle session {} (inactive for >{}s)",
+                    session_id,
+                    SESSION_IDLE_TIMEOUT_SECS
+                );
+                drop(session.input_tx);
+                drop(session.resize_tx);
+                session.reader_task.abort();
+                session.writer_task.abort();
+            }
+        }
     }
 
     async fn cleanup_sessions(&mut self) {
