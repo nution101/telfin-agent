@@ -10,6 +10,7 @@ mod error;
 mod fingerprint;
 mod keychain;
 mod protocol;
+mod service;
 
 use crate::error::Result;
 
@@ -39,6 +40,10 @@ enum Commands {
     Status,
     /// Logout and remove credentials
     Logout,
+    /// Install auto-start service
+    Install,
+    /// Uninstall auto-start service
+    Uninstall,
 }
 
 #[tokio::main]
@@ -106,6 +111,14 @@ async fn main() -> Result<()> {
             let keychain = keychain::get_provider();
             keychain.delete_token()?;
             println!("✓ Logged out successfully");
+            Ok(())
+        }
+        Commands::Install => {
+            service::install()?;
+            Ok(())
+        }
+        Commands::Uninstall => {
+            service::uninstall()?;
             Ok(())
         }
     }

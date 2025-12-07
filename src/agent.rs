@@ -239,13 +239,16 @@ impl Agent {
         // Build shell command based on config
         let cmd = match &self.config.shell_command {
             Some(shell_cmd) => {
-                // Parse command string into command + args
-                let parts: Vec<&str> = shell_cmd.split_whitespace().collect();
+                // Parse command string into command + args using shell-words for proper quoting
+                let parts = shell_words::split(shell_cmd).map_err(|e| {
+                    AgentError::ConfigError(format!("Invalid shell_command: {}", e))
+                })?;
+
                 if parts.is_empty() {
                     return Err(AgentError::ConfigError("Empty shell_command".to_string()));
                 }
 
-                let mut cmd = CommandBuilder::new(parts[0]);
+                let mut cmd = CommandBuilder::new(&parts[0]);
                 for arg in &parts[1..] {
                     cmd.arg(arg);
                 }
@@ -258,7 +261,12 @@ impl Agent {
             }
             None => {
                 // Use system default shell
-                let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+                #[cfg(unix)]
+                let default_shell = "/bin/bash";
+                #[cfg(windows)]
+                let default_shell = "cmd.exe";
+
+                let shell = std::env::var("SHELL").unwrap_or_else(|_| default_shell.to_string());
                 tracing::info!(
                     "Starting session {} with default shell: {}",
                     session_id,

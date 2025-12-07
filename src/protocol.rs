@@ -3,6 +3,9 @@ use crate::error::{AgentError, Result};
 /// Binary protocol version
 pub const PROTOCOL_VERSION: u8 = 1;
 
+/// Maximum payload size (1MB)
+pub const MAX_PAYLOAD_SIZE: usize = 1024 * 1024;
+
 /// Message types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -98,6 +101,14 @@ impl Message {
         let session_id = u32::from_be_bytes([data[2], data[3], data[4], data[5]]);
         let payload_len = u32::from_be_bytes([data[6], data[7], data[8], data[9]]) as usize;
 
+        // Validate payload size
+        if payload_len > MAX_PAYLOAD_SIZE {
+            return Err(AgentError::ProtocolError(format!(
+                "Payload too large: {} bytes (max {})",
+                payload_len, MAX_PAYLOAD_SIZE
+            )));
+        }
+
         if data.len() != 10 + payload_len {
             return Err(AgentError::ProtocolError(format!(
                 "Invalid payload length: expected {}, got {}",
@@ -143,6 +154,14 @@ impl ResizePayload {
 
         let cols = u16::from_be_bytes([data[0], data[1]]);
         let rows = u16::from_be_bytes([data[2], data[3]]);
+
+        // Validate terminal dimensions
+        if cols == 0 || rows == 0 || cols > 500 || rows > 500 {
+            return Err(AgentError::ProtocolError(format!(
+                "Invalid terminal size: {}x{} (must be 1-500)",
+                cols, rows
+            )));
+        }
 
         Ok(Self { cols, rows })
     }
@@ -190,5 +209,44 @@ mod tests {
         let data = vec![1, 99, 0, 0, 0, 1, 0, 0, 0, 0];
         let result = Message::decode(&data);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_payload_too_large() {
+        // Create header with payload size larger than MAX_PAYLOAD_SIZE
+        let mut data = vec![1, 1, 0, 0, 0, 1];
+        let large_size = (MAX_PAYLOAD_SIZE + 1) as u32;
+        data.extend_from_slice(&large_size.to_be_bytes());
+
+        let result = Message::decode(&data);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("too large"));
+    }
+
+    #[test]
+    fn test_resize_bounds_validation() {
+        // Test zero dimensions
+        let zero_cols = ResizePayload { cols: 0, rows: 24 }.encode();
+        assert!(ResizePayload::decode(&zero_cols).is_err());
+
+        let zero_rows = ResizePayload { cols: 80, rows: 0 }.encode();
+        assert!(ResizePayload::decode(&zero_rows).is_err());
+
+        // Test too large dimensions
+        let large_cols = ResizePayload { cols: 501, rows: 24 }.encode();
+        assert!(ResizePayload::decode(&large_cols).is_err());
+
+        let large_rows = ResizePayload { cols: 80, rows: 501 }.encode();
+        assert!(ResizePayload::decode(&large_rows).is_err());
+
+        // Test valid dimensions
+        let valid = ResizePayload { cols: 80, rows: 24 }.encode();
+        assert!(ResizePayload::decode(&valid).is_ok());
+
+        let max_valid = ResizePayload { cols: 500, rows: 500 }.encode();
+        assert!(ResizePayload::decode(&max_valid).is_ok());
+
+        let min_valid = ResizePayload { cols: 1, rows: 1 }.encode();
+        assert!(ResizePayload::decode(&min_valid).is_ok());
     }
 }

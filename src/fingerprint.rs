@@ -80,7 +80,7 @@ fn get_machine_id() -> Result<String> {
 
 #[cfg(target_os = "macos")]
 fn get_macos_uuid() -> Result<String> {
-    let output = Command::new("ioreg")
+    let output = Command::new("/usr/sbin/ioreg")
         .args(["-rd1", "-c", "IOPlatformExpertDevice"])
         .output()?;
 

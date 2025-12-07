@@ -39,13 +39,37 @@ impl Config {
     pub fn load() -> Result<Self> {
         let config_path = Self::config_file_path()?;
 
-        if config_path.exists() {
+        let config = if config_path.exists() {
             let contents = std::fs::read_to_string(&config_path)?;
-            let config: Config = serde_json::from_str(&contents)?;
-            Ok(config)
+            serde_json::from_str(&contents)?
         } else {
-            Ok(Self::default())
+            Self::default()
+        };
+
+        // Validate configuration
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Validate configuration values
+    fn validate(&self) -> Result<()> {
+        // Validate heartbeat_interval (5-300 seconds)
+        if self.heartbeat_interval < 5 || self.heartbeat_interval > 300 {
+            return Err(AgentError::ConfigError(format!(
+                "heartbeat_interval must be between 5 and 300 seconds, got {}",
+                self.heartbeat_interval
+            )));
         }
+
+        // Validate reconnect_interval (1-60 seconds)
+        if self.reconnect_interval < 1 || self.reconnect_interval > 60 {
+            return Err(AgentError::ConfigError(format!(
+                "reconnect_interval must be between 1 and 60 seconds, got {}",
+                self.reconnect_interval
+            )));
+        }
+
+        Ok(())
     }
 
     /// Save configuration to file
@@ -130,5 +154,51 @@ mod tests {
     fn test_api_url() {
         let config = Config::default();
         assert_eq!(config.api_url(), "https://gateway.telfin.io/api");
+    }
+
+    #[test]
+    fn test_validate_heartbeat_interval() {
+        let mut config = Config::default();
+
+        // Test too low
+        config.heartbeat_interval = 4;
+        assert!(config.validate().is_err());
+
+        // Test too high
+        config.heartbeat_interval = 301;
+        assert!(config.validate().is_err());
+
+        // Test valid values
+        config.heartbeat_interval = 5;
+        assert!(config.validate().is_ok());
+
+        config.heartbeat_interval = 300;
+        assert!(config.validate().is_ok());
+
+        config.heartbeat_interval = 30;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_reconnect_interval() {
+        let mut config = Config::default();
+
+        // Test too low
+        config.reconnect_interval = 0;
+        assert!(config.validate().is_err());
+
+        // Test too high
+        config.reconnect_interval = 61;
+        assert!(config.validate().is_err());
+
+        // Test valid values
+        config.reconnect_interval = 1;
+        assert!(config.validate().is_ok());
+
+        config.reconnect_interval = 60;
+        assert!(config.validate().is_ok());
+
+        config.reconnect_interval = 5;
+        assert!(config.validate().is_ok());
     }
 }
