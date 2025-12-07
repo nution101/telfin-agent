@@ -7,8 +7,8 @@ use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::ERROR_NOT_FOUND;
 #[cfg(target_os = "windows")]
 use windows::Win32::Security::Credentials::{
-    CredDeleteW, CredReadW, CredWriteW, CREDENTIALW, CRED_FLAGS,
-    CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC,
+    CredDeleteW, CredReadW, CredWriteW, CREDENTIALW, CRED_FLAGS, CRED_PERSIST_LOCAL_MACHINE,
+    CRED_TYPE_GENERIC,
 };
 
 pub struct WindowsKeychain;

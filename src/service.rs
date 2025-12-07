@@ -58,14 +58,10 @@ fn install_systemd_service() -> Result<()> {
     let exe_path = std::env::current_exe()?;
 
     // Create systemd user service directory
-    let home_dir = dirs::home_dir().ok_or_else(|| {
-        AgentError::ConfigError("Could not determine home directory".to_string())
-    })?;
+    let home_dir = dirs::home_dir()
+        .ok_or_else(|| AgentError::ConfigError("Could not determine home directory".to_string()))?;
 
-    let service_dir = home_dir
-        .join(".config")
-        .join("systemd")
-        .join("user");
+    let service_dir = home_dir.join(".config").join("systemd").join("user");
 
     fs::create_dir_all(&service_dir)?;
 
@@ -119,9 +115,7 @@ WantedBy=default.target
     }
 
     // Enable lingering so service runs without user login
-    let output = Command::new("loginctl")
-        .args(["enable-linger"])
-        .output()?;
+    let output = Command::new("loginctl").args(["enable-linger"]).output()?;
 
     if !output.status.success() {
         tracing::warn!(
@@ -142,9 +136,8 @@ WantedBy=default.target
 
 #[cfg(target_os = "linux")]
 fn uninstall_systemd_service() -> Result<()> {
-    let home_dir = dirs::home_dir().ok_or_else(|| {
-        AgentError::ConfigError("Could not determine home directory".to_string())
-    })?;
+    let home_dir = dirs::home_dir()
+        .ok_or_else(|| AgentError::ConfigError("Could not determine home directory".to_string()))?;
 
     let service_file = home_dir
         .join(".config")
@@ -184,9 +177,8 @@ fn install_launchd_service() -> Result<()> {
     let exe_path = std::env::current_exe()?;
 
     // Get home directory for LaunchAgents
-    let home_dir = dirs::home_dir().ok_or_else(|| {
-        AgentError::ConfigError("Could not determine home directory".to_string())
-    })?;
+    let home_dir = dirs::home_dir()
+        .ok_or_else(|| AgentError::ConfigError("Could not determine home directory".to_string()))?;
 
     let launch_agents_dir = home_dir.join("Library").join("LaunchAgents");
     fs::create_dir_all(&launch_agents_dir)?;
@@ -262,9 +254,8 @@ fn install_launchd_service() -> Result<()> {
 
 #[cfg(target_os = "macos")]
 fn uninstall_launchd_service() -> Result<()> {
-    let home_dir = dirs::home_dir().ok_or_else(|| {
-        AgentError::ConfigError("Could not determine home directory".to_string())
-    })?;
+    let home_dir = dirs::home_dir()
+        .ok_or_else(|| AgentError::ConfigError("Could not determine home directory".to_string()))?;
 
     let plist_file = home_dir
         .join("Library")

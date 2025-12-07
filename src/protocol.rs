@@ -233,17 +233,29 @@ mod tests {
         assert!(ResizePayload::decode(&zero_rows).is_err());
 
         // Test too large dimensions
-        let large_cols = ResizePayload { cols: 501, rows: 24 }.encode();
+        let large_cols = ResizePayload {
+            cols: 501,
+            rows: 24,
+        }
+        .encode();
         assert!(ResizePayload::decode(&large_cols).is_err());
 
-        let large_rows = ResizePayload { cols: 80, rows: 501 }.encode();
+        let large_rows = ResizePayload {
+            cols: 80,
+            rows: 501,
+        }
+        .encode();
         assert!(ResizePayload::decode(&large_rows).is_err());
 
         // Test valid dimensions
         let valid = ResizePayload { cols: 80, rows: 24 }.encode();
         assert!(ResizePayload::decode(&valid).is_ok());
 
-        let max_valid = ResizePayload { cols: 500, rows: 500 }.encode();
+        let max_valid = ResizePayload {
+            cols: 500,
+            rows: 500,
+        }
+        .encode();
         assert!(ResizePayload::decode(&max_valid).is_ok());
 
         let min_valid = ResizePayload { cols: 1, rows: 1 }.encode();
