@@ -76,7 +76,11 @@ install() {
     
     info "Installation complete!"
     echo ""
-    echo "Run 'telfin --help' to get started"
+    echo "Get started:"
+    echo "  telfin login    # Authenticate with your account"
+    echo "  telfin start    # Connect to gateway"
+    echo ""
+    echo "Run 'telfin --help' for all commands"
     echo ""
 }
 
