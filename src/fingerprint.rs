@@ -1,5 +1,7 @@
 use crate::error::Result;
 use sha2::{Digest, Sha256};
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::process::Command;
 
 /// Generate a stable device fingerprint based on hardware identifiers
@@ -46,36 +48,34 @@ pub fn generate() -> Result<String> {
     Ok(hex::encode(result))
 }
 
+#[cfg(target_os = "linux")]
 fn get_machine_id() -> Result<String> {
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(id) = std::fs::read_to_string("/etc/machine-id") {
-            return Ok(id.trim().to_string());
-        }
-        if let Ok(id) = std::fs::read_to_string("/var/lib/dbus/machine-id") {
-            return Ok(id.trim().to_string());
-        }
-        return Err(crate::error::AgentError::Other(
-            "Could not read machine-id".to_string(),
-        ));
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        get_macos_uuid()
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        get_windows_guid()
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    {
+    if let Ok(id) = std::fs::read_to_string("/etc/machine-id") {
+        Ok(id.trim().to_string())
+    } else if let Ok(id) = std::fs::read_to_string("/var/lib/dbus/machine-id") {
+        Ok(id.trim().to_string())
+    } else {
         Err(crate::error::AgentError::Other(
-            "Unsupported platform".to_string(),
+            "Could not read machine-id".to_string(),
         ))
     }
+}
+
+#[cfg(target_os = "macos")]
+fn get_machine_id() -> Result<String> {
+    get_macos_uuid()
+}
+
+#[cfg(target_os = "windows")]
+fn get_machine_id() -> Result<String> {
+    get_windows_guid()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+fn get_machine_id() -> Result<String> {
+    Err(crate::error::AgentError::Other(
+        "Unsupported platform".to_string(),
+    ))
 }
 
 #[cfg(target_os = "macos")]
