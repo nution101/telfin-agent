@@ -1,4 +1,4 @@
-use crate::error::Result;
+use crate::error::{AgentError, Result};
 
 /// Platform-agnostic keychain interface
 pub trait KeychainProvider: Send + Sync {
@@ -10,6 +10,39 @@ pub trait KeychainProvider: Send + Sync {
 
     /// Delete authentication token from keychain
     fn delete_token(&self) -> Result<()>;
+}
+
+/// Async wrapper to save token using spawn_blocking
+/// Required on Linux where secret-service uses zbus which conflicts with Tokio
+pub async fn save_token_async(token: String) -> Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let keychain = get_provider();
+        keychain.save_token(&token)
+    })
+    .await
+    .map_err(|e| AgentError::KeychainError(format!("Task join failed: {}", e)))?
+}
+
+/// Async wrapper to get token using spawn_blocking
+/// Required on Linux where secret-service uses zbus which conflicts with Tokio
+pub async fn get_token_async() -> Result<Option<String>> {
+    tokio::task::spawn_blocking(|| {
+        let keychain = get_provider();
+        keychain.get_token()
+    })
+    .await
+    .map_err(|e| AgentError::KeychainError(format!("Task join failed: {}", e)))?
+}
+
+/// Async wrapper to delete token using spawn_blocking
+/// Required on Linux where secret-service uses zbus which conflicts with Tokio
+pub async fn delete_token_async() -> Result<()> {
+    tokio::task::spawn_blocking(|| {
+        let keychain = get_provider();
+        keychain.delete_token()
+    })
+    .await
+    .map_err(|e| AgentError::KeychainError(format!("Task join failed: {}", e)))?
 }
 
 #[cfg(target_os = "linux")]

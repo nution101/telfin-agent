@@ -83,9 +83,8 @@ pub async fn device_code_flow(server_url: &str) -> Result<()> {
     )
     .await?;
 
-    // Step 4: Store token in keychain
-    let keychain = keychain::get_provider();
-    keychain.save_token(&token)?;
+    // Step 4: Store token in keychain (using async wrapper for Linux compatibility)
+    keychain::save_token_async(token).await?;
 
     tracing::info!("Token saved to keychain");
     Ok(())

@@ -82,10 +82,9 @@ async fn main() -> Result<()> {
                 config.machine_name = name;
             }
 
-            // Get access token from keychain
-            let keychain = keychain::get_provider();
-            let access_token = keychain
-                .get_token()?
+            // Get access token from keychain (using async wrapper for Linux compatibility)
+            let access_token = keychain::get_token_async()
+                .await?
                 .ok_or(error::AgentError::NotLoggedIn)?;
 
             // Validate token before use
@@ -95,7 +94,7 @@ async fn main() -> Result<()> {
                 }
                 Err(e) => {
                     tracing::error!("Token validation failed: {}", e);
-                    keychain.delete_token().ok();
+                    keychain::delete_token_async().await.ok();
                     return Err(error::AgentError::AuthError(
                         "Token is invalid or expired. Please run 'telfin login' again.".to_string(),
                     ));
@@ -140,8 +139,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::Logout => {
-            let keychain = keychain::get_provider();
-            keychain.delete_token()?;
+            keychain::delete_token_async().await?;
             println!("✓ Logged out successfully");
             Ok(())
         }
@@ -157,8 +155,7 @@ async fn main() -> Result<()> {
 }
 
 async fn check_status() -> Result<()> {
-    let keychain = keychain::get_provider();
-    let token = keychain.get_token()?;
+    let token = keychain::get_token_async().await?;
 
     if let Some(token) = token {
         let config = config::Config::load()?;
