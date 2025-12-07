@@ -187,7 +187,7 @@ mod tests {
 
     #[test]
     fn test_unknown_message_type() {
-        let mut data = vec![1, 99, 0, 0, 0, 1, 0, 0, 0, 0];
+        let data = vec![1, 99, 0, 0, 0, 1, 0, 0, 0, 0];
         let result = Message::decode(&data);
         assert!(result.is_err());
     }

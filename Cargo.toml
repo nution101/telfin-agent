@@ -11,7 +11,7 @@ authors = ["Telfin Team"]
 tokio = { version = "1.40", features = ["full", "signal"] }
 
 # WebSocket client
-tokio-tungstenite = { version = "0.23", features = ["native-tls"] }
+tokio-tungstenite = { version = "0.23", features = ["rustls-tls-native-roots"] }
 futures-util = "0.3"
 
 # PTY handling
