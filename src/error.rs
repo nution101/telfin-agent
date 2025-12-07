@@ -2,6 +2,7 @@ use thiserror::Error;
 
 /// Main error type for telfin-agent
 #[derive(Error, Debug)]
+#[allow(clippy::result_large_err)]
 pub enum AgentError {
     #[error("Authentication failed: {0}")]
     AuthError(String),

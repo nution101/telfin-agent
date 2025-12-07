@@ -125,6 +125,7 @@ pub struct ResizePayload {
 }
 
 impl ResizePayload {
+    #[allow(dead_code)]
     pub fn encode(&self) -> Vec<u8> {
         let mut buffer = Vec::with_capacity(4);
         buffer.extend_from_slice(&self.cols.to_be_bytes());

@@ -62,12 +62,12 @@ fn get_machine_id() -> Result<String> {
 
     #[cfg(target_os = "macos")]
     {
-        return get_macos_uuid();
+        get_macos_uuid()
     }
 
     #[cfg(target_os = "windows")]
     {
-        return get_windows_guid();
+        get_windows_guid()
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
@@ -81,7 +81,7 @@ fn get_machine_id() -> Result<String> {
 #[cfg(target_os = "macos")]
 fn get_macos_uuid() -> Result<String> {
     let output = Command::new("ioreg")
-        .args(&["-rd1", "-c", "IOPlatformExpertDevice"])
+        .args(["-rd1", "-c", "IOPlatformExpertDevice"])
         .output()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -101,7 +101,7 @@ fn get_macos_uuid() -> Result<String> {
 #[cfg(target_os = "windows")]
 fn get_windows_guid() -> Result<String> {
     let output = Command::new("wmic")
-        .args(&["csproduct", "get", "UUID"])
+        .args(["csproduct", "get", "UUID"])
         .output()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);

@@ -12,6 +12,7 @@ use tokio_tungstenite::tungstenite::http::Request;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
+#[allow(dead_code)]
 type WsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// Main agent that manages the WebSocket connection and PTY sessions
@@ -23,6 +24,7 @@ pub struct Agent {
 }
 
 struct Session {
+    #[allow(dead_code)]
     id: u32,
     input_tx: mpsc::Sender<Vec<u8>>,
     resize_tx: mpsc::Sender<(u16, u16)>,
@@ -285,7 +287,7 @@ impl Agent {
         let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(1024);
 
         // Channel for resize events
-        let (resize_tx, mut resize_rx) = mpsc::channel::<(u16, u16)>(10);
+        let (resize_tx, _resize_rx) = mpsc::channel::<(u16, u16)>(10);
 
         // Spawn task to read PTY output and send to WebSocket
         let tx_output = tx.clone();

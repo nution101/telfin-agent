@@ -49,6 +49,7 @@ impl Config {
     }
 
     /// Save configuration to file
+    #[allow(dead_code)]
     pub fn save(&self) -> Result<()> {
         let config_path = Self::config_file_path()?;
 
@@ -72,6 +73,7 @@ impl Config {
     }
 
     /// Get the state directory path
+    #[allow(dead_code)]
     pub fn state_dir() -> Result<PathBuf> {
         let state_dir = dirs::data_local_dir()
             .ok_or_else(|| AgentError::ConfigError("Could not find state directory".to_string()))?;
@@ -83,6 +85,7 @@ impl Config {
     }
 
     /// Get the PID file path
+    #[allow(dead_code)]
     pub fn pid_file_path() -> Result<PathBuf> {
         Ok(Self::state_dir()?.join("telfin-agent.pid"))
     }
@@ -95,6 +98,7 @@ impl Config {
     }
 
     /// Get API base URL
+    #[allow(dead_code)]
     pub fn api_url(&self) -> String {
         format!("{}/api", self.server_url)
     }

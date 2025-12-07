@@ -1,4 +1,4 @@
-use crate::error::{AgentError, Result};
+use crate::error::Result;
 
 /// Platform-agnostic keychain interface
 pub trait KeychainProvider: Send + Sync {
