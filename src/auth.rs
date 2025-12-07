@@ -282,12 +282,8 @@ pub fn validate_token_locally(token: &str) -> Result<TokenClaims> {
     validation.insecure_disable_signature_validation();
     validation.validate_exp = true;
 
-    let token_data = decode::<TokenClaims>(
-        token,
-        &DecodingKey::from_secret(&[]),
-        &validation,
-    )
-    .map_err(|e| AgentError::AuthError(format!("Invalid token: {}", e)))?;
+    let token_data = decode::<TokenClaims>(token, &DecodingKey::from_secret(&[]), &validation)
+        .map_err(|e| AgentError::AuthError(format!("Invalid token: {}", e)))?;
 
     Ok(token_data.claims)
 }
@@ -342,12 +338,10 @@ mod tests {
         use base64::Engine;
         let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(r#"{"alg":"HS256","typ":"JWT"}"#);
-        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
-            format!(
-                r#"{{"sub":"user123","exp":{},"iat":{}}}"#,
-                future_exp, past_iat
-            ),
-        );
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(format!(
+            r#"{{"sub":"user123","exp":{},"iat":{}}}"#,
+            future_exp, past_iat
+        ));
         let valid_token = format!("{}.{}.fake_signature", header, payload);
 
         let result = validate_token_locally(&valid_token);
@@ -370,8 +364,10 @@ mod tests {
         use base64::Engine;
         let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(r#"{"alg":"HS256","typ":"JWT"}"#);
-        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(format!(r#"{{"sub":"user123","exp":{},"iat":{}}}"#, soon_exp, now));
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(format!(
+            r#"{{"sub":"user123","exp":{},"iat":{}}}"#,
+            soon_exp, now
+        ));
         let token = format!("{}.{}.fake_signature", header, payload);
 
         // Should be expiring within 60 seconds
@@ -397,12 +393,10 @@ mod tests {
         use base64::Engine;
         let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(r#"{"alg":"HS256","typ":"JWT"}"#);
-        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
-            format!(
-                r#"{{"sub":"user123","exp":{},"iat":{},"machine_id":"machine456"}}"#,
-                future_exp, past_iat
-            ),
-        );
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(format!(
+            r#"{{"sub":"user123","exp":{},"iat":{},"machine_id":"machine456"}}"#,
+            future_exp, past_iat
+        ));
         let token = format!("{}.{}.fake_signature", header, payload);
 
         let result = validate_token_locally(&token);

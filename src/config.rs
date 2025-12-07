@@ -17,11 +17,7 @@ const ALLOWED_SHELLS: &[&str] = &[
 ];
 
 #[cfg(windows)]
-const ALLOWED_WINDOWS_SHELLS: &[&str] = &[
-    "cmd.exe",
-    "powershell.exe",
-    "pwsh.exe",
-];
+const ALLOWED_WINDOWS_SHELLS: &[&str] = &["cmd.exe", "powershell.exe", "pwsh.exe"];
 
 /// Application configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,7 +109,7 @@ impl Config {
                 // Unix: must be absolute path
                 if !cmd.starts_with('/') {
                     return Err(AgentError::ConfigError(
-                        "shell_command must be an absolute path on Unix".to_string()
+                        "shell_command must be an absolute path on Unix".to_string(),
                     ));
                 }
 
@@ -134,7 +130,10 @@ impl Config {
                     .and_then(|s| s.to_str())
                     .unwrap_or(cmd);
 
-                if !ALLOWED_WINDOWS_SHELLS.iter().any(|s| s.eq_ignore_ascii_case(basename)) {
+                if !ALLOWED_WINDOWS_SHELLS
+                    .iter()
+                    .any(|s| s.eq_ignore_ascii_case(basename))
+                {
                     return Err(AgentError::ConfigError(format!(
                         "shell_command '{}' not in allowed list: {:?}",
                         cmd, ALLOWED_WINDOWS_SHELLS
@@ -151,14 +150,15 @@ impl Config {
             // Check if valid hex string
             if hex::decode(&clean).is_err() {
                 return Err(AgentError::ConfigError(
-                    "tls_cert_fingerprint must be a valid hex string".to_string()
+                    "tls_cert_fingerprint must be a valid hex string".to_string(),
                 ));
             }
 
             // Check if 32 bytes (SHA-256)
             if clean.len() != 64 {
                 return Err(AgentError::ConfigError(
-                    "tls_cert_fingerprint must be 64 hex characters (32 bytes for SHA-256)".to_string()
+                    "tls_cert_fingerprint must be 64 hex characters (32 bytes for SHA-256)"
+                        .to_string(),
                 ));
             }
         }

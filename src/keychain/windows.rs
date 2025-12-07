@@ -37,7 +37,7 @@ impl KeychainProvider for WindowsKeychain {
         // Validate token size
         if token.len() > 1024 * 1024 {
             return Err(AgentError::KeychainError(
-                "Token size exceeds maximum allowed".to_string()
+                "Token size exceeds maximum allowed".to_string(),
             ));
         }
 
@@ -89,7 +89,7 @@ impl KeychainProvider for WindowsKeychain {
                     if blob_size > 1024 * 1024 {
                         windows::Win32::Security::Credentials::CredFree(credential_ptr as *const _);
                         return Err(AgentError::KeychainError(
-                            "Token size exceeds maximum allowed".to_string()
+                            "Token size exceeds maximum allowed".to_string(),
                         ));
                     }
 
@@ -97,15 +97,12 @@ impl KeychainProvider for WindowsKeychain {
                     if blob_size > 0 && credential.CredentialBlob.is_null() {
                         windows::Win32::Security::Credentials::CredFree(credential_ptr as *const _);
                         return Err(AgentError::KeychainError(
-                            "Invalid credential blob pointer".to_string()
+                            "Invalid credential blob pointer".to_string(),
                         ));
                     }
 
                     let blob = if blob_size > 0 {
-                        std::slice::from_raw_parts(
-                            credential.CredentialBlob,
-                            blob_size,
-                        )
+                        std::slice::from_raw_parts(credential.CredentialBlob, blob_size)
                     } else {
                         &[]
                     };

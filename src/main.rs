@@ -92,15 +92,16 @@ async fn main() -> Result<()> {
                     tracing::error!("Token validation failed: {}", e);
                     keychain.delete_token().ok();
                     return Err(error::AgentError::AuthError(
-                        "Token is invalid or expired. Please run 'telfin login' again."
-                            .to_string(),
+                        "Token is invalid or expired. Please run 'telfin login' again.".to_string(),
                     ));
                 }
             }
 
             // Check if token is expiring soon (within 5 minutes)
             if auth::token_expiring_soon(&access_token, 300) {
-                tracing::warn!("Token will expire soon. Consider running 'telfin login' to refresh.");
+                tracing::warn!(
+                    "Token will expire soon. Consider running 'telfin login' to refresh."
+                );
             }
 
             // Register machine with gateway to get agent token

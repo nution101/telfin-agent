@@ -31,7 +31,11 @@ fn get_primary_mac_address() -> Option<String> {
         for entry in entries.filter_map(|e| e.ok()) {
             let name = entry.file_name().to_string_lossy().to_string();
             // Skip loopback and virtual interfaces
-            if name == "lo" || name.starts_with("veth") || name.starts_with("docker") || name.starts_with("br-") {
+            if name == "lo"
+                || name.starts_with("veth")
+                || name.starts_with("docker")
+                || name.starts_with("br-")
+            {
                 continue;
             }
 

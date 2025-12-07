@@ -99,9 +99,9 @@ impl ServerCertVerifier for PinnedCertVerifier {
 
 /// Build TLS config, optionally with certificate pinning
 pub fn build_tls_config(fingerprint: Option<&str>) -> Result<rustls::ClientConfig> {
-    let builder = rustls::ClientConfig::builder_with_provider(
-        Arc::new(rustls::crypto::aws_lc_rs::default_provider())
-    )
+    let builder = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
     .with_safe_default_protocol_versions()
     .map_err(|e| AgentError::ConfigError(format!("TLS protocol version error: {}", e)))?;
 
