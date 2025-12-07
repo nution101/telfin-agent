@@ -253,7 +253,11 @@ pub async fn register_machine(
 
     let resp: RegisterMachineResponse = response.json().await?;
 
-    tracing::info!("Machine registered: {} ({})", resp.machine.name, resp.machine.id);
+    tracing::info!(
+        "Machine registered: {} ({})",
+        resp.machine.name,
+        resp.machine.id
+    );
 
     Ok(MachineRegistration {
         machine_id: resp.machine.id,
