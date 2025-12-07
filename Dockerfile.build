@@ -1,0 +1,39 @@
+# Cross-compilation builder for telfin-agent
+# Builds static Linux binary for x86_64 (AMD64)
+# Target: x86_64 Linux (K8s cluster architecture)
+
+FROM rust:1.85-alpine AS builder
+
+# Install build dependencies for musl static linking
+RUN apk add --no-cache \
+    musl-dev \
+    openssl-dev \
+    openssl-libs-static \
+    pkgconfig \
+    perl \
+    make
+
+# Install x86_64 musl target
+RUN rustup target add x86_64-unknown-linux-musl
+
+WORKDIR /app
+COPY . .
+
+# Build for x86_64 Linux (static binary)
+RUN RUSTFLAGS='-C target-feature=+crt-static' \
+    OPENSSL_STATIC=1 \
+    cargo build --release --target x86_64-unknown-linux-musl
+
+# Final stage - minimal image with just the binary
+FROM alpine:latest
+
+RUN apk add --no-cache ca-certificates file
+
+COPY --from=builder \
+    /app/target/x86_64-unknown-linux-musl/release/telfin-agent \
+    /usr/local/bin/telfin-agent
+
+# Verify binary is static
+RUN file /usr/local/bin/telfin-agent
+
+ENTRYPOINT ["/usr/local/bin/telfin-agent"]

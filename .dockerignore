@@ -1,0 +1,29 @@
+# Build artifacts
+target/
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+!README.md
+
+# CI/CD (not needed in container)
+.github/
+
+# Development
+.env
+.env.local
