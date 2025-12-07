@@ -27,3 +27,14 @@ Thumbs.db
 # Local development files (never commit)
 CLAUDE.md
 .githooks/
+
+# Internal documentation (not for public repo)
+AUTO_START_GUIDE.md
+BUILD_REFERENCE.md
+CHANGES.md
+CROSS_COMPILATION.md
+IMPLEMENTATION.md
+SECURITY_FIXES.md
+SECURITY_IMPROVEMENTS.md
+SETUP_COMPLETE.md
+TLS_PINNING.md
