@@ -53,7 +53,7 @@ impl KeychainProvider for WindowsKeychain {
         };
 
         unsafe {
-            CredWriteW(&mut credential, CRED_FLAGS(0))
+            CredWriteW(&mut credential, 0)
                 .map_err(|e| AgentError::KeychainError(format!("Failed to save token: {}", e)))?;
         }
 
