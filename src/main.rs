@@ -25,14 +25,14 @@ struct Cli {
 enum Commands {
     /// Authenticate with Telfin
     Login {
-        #[arg(long, default_value = "https://app.telfin.io")]
+        #[arg(long, default_value = "https://gateway.telfin.io")]
         server: String,
     },
     /// Start the agent daemon
     Start {
         #[arg(long)]
         machine_name: Option<String>,
-        #[arg(long, default_value = "https://app.telfin.io")]
+        #[arg(long, default_value = "https://gateway.telfin.io")]
         server: String,
     },
     /// Check agent status
