@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::error::{AgentError, Result};
-use crate::protocol::{Message, MessageType, ResizePayload};
+use crate::protocol::{DataSubType, Message, MessageType, ResizePayload};
 use futures_util::{SinkExt, StreamExt};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::collections::HashMap;
@@ -12,6 +12,7 @@ use tokio::time::{interval, Duration};
 use tokio_tungstenite::tungstenite::http::Request;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
+use uuid::Uuid;
 
 const MAX_CONCURRENT_SESSIONS: usize = 10;
 const MESSAGE_BURST_LIMIT: usize = 100;
@@ -26,14 +27,14 @@ pub struct Agent {
     config: Config,
     token: String,
     fingerprint: String,
-    sessions: Arc<Mutex<HashMap<u32, Session>>>,
+    sessions: Arc<Mutex<HashMap<Uuid, Session>>>,
     message_count: Arc<AtomicUsize>,
     last_rate_reset: Arc<Mutex<std::time::Instant>>,
 }
 
 struct Session {
     #[allow(dead_code)]
-    id: u32,
+    id: Uuid,
     input_tx: mpsc::Sender<Vec<u8>>,
     resize_tx: mpsc::Sender<(u16, u16)>,
     _child: Box<dyn portable_pty::Child + Send + Sync>,
@@ -245,7 +246,7 @@ impl Agent {
             let mut interval = interval(Duration::from_secs(heartbeat_interval));
             loop {
                 interval.tick().await;
-                let heartbeat = Message::new(MessageType::Heartbeat, 0, vec![]);
+                let heartbeat = Message::ping(Uuid::nil());
                 if tx_heartbeat
                     .send(WsMessage::Binary(heartbeat.encode()))
                     .await
@@ -307,34 +308,68 @@ impl Agent {
         let msg = Message::decode(data)?;
 
         match msg.msg_type {
-            MessageType::SessionStart => {
-                tracing::info!("Starting session {}", msg.session_id);
-                self.start_session(msg.session_id, tx).await?;
+            MessageType::Data => {
+                // Data messages can contain different sub-types
+                if msg.payload.is_empty() {
+                    tracing::warn!("Received empty Data message for session {}", msg.session_id);
+                    return Ok(());
+                }
+
+                // Check if this is a new session (no existing session with this ID)
+                let sessions = self.sessions.lock().await;
+                let session_exists = sessions.contains_key(&msg.session_id);
+                drop(sessions);
+
+                if !session_exists {
+                    // New session - start it
+                    tracing::info!("Starting new session {}", msg.session_id);
+                    self.start_session(msg.session_id, tx.clone()).await?;
+                }
+
+                // Check for sub-type in payload
+                match msg.payload[0] {
+                    0x00 => {
+                        // Raw terminal data (skip sub-type byte)
+                        self.handle_input(msg.session_id, &msg.payload[1..]).await?;
+                    }
+                    0x01 => {
+                        // Resize event
+                        let resize = ResizePayload::decode(&msg.payload)?;
+                        self.resize_terminal(msg.session_id, resize.cols, resize.rows)
+                            .await?;
+                    }
+                    _ => {
+                        // Assume raw data if no valid sub-type (backward compatibility)
+                        self.handle_input(msg.session_id, &msg.payload).await?;
+                    }
+                }
             }
-            MessageType::TerminalInput => {
-                self.handle_input(msg.session_id, &msg.payload).await?;
-            }
-            MessageType::TerminalResize => {
-                let resize = ResizePayload::decode(&msg.payload)?;
-                self.resize_terminal(msg.session_id, resize.cols, resize.rows)
-                    .await?;
-            }
-            MessageType::SessionEnd => {
+            MessageType::Close => {
                 tracing::info!("Ending session {}", msg.session_id);
                 self.end_session(msg.session_id).await?;
             }
-            MessageType::Heartbeat => {
-                // Heartbeat received, no action needed
+            MessageType::Ping => {
+                // Respond with Pong
+                let pong = Message::pong(msg.session_id);
+                let _ = tx.send(WsMessage::Binary(pong.encode())).await;
             }
-            _ => {
-                tracing::warn!("Unhandled message type: {:?}", msg.msg_type);
+            MessageType::Pong => {
+                // Heartbeat response received
+            }
+            MessageType::Error => {
+                let error_msg = String::from_utf8_lossy(&msg.payload);
+                tracing::error!(
+                    "Received error from gateway for session {}: {}",
+                    msg.session_id,
+                    error_msg
+                );
             }
         }
 
         Ok(())
     }
 
-    async fn start_session(&mut self, session_id: u32, tx: mpsc::Sender<WsMessage>) -> Result<()> {
+    async fn start_session(&mut self, session_id: Uuid, tx: mpsc::Sender<WsMessage>) -> Result<()> {
         let sessions = self.sessions.lock().await;
         if sessions.len() >= MAX_CONCURRENT_SESSIONS {
             tracing::warn!(
@@ -428,11 +463,12 @@ impl Agent {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let msg = Message::new(
-                            MessageType::TerminalOutput,
-                            session_id,
-                            buf[..n].to_vec(),
-                        );
+                        // Prepend sub-type byte for raw terminal data
+                        let mut payload = Vec::with_capacity(n + 1);
+                        payload.push(DataSubType::RawData as u8);
+                        payload.extend_from_slice(&buf[..n]);
+
+                        let msg = Message::data(session_id, payload);
                         if tx_output
                             .blocking_send(WsMessage::Binary(msg.encode()))
                             .is_err()
@@ -501,13 +537,13 @@ impl Agent {
         // Lock released here after both operations complete
     }
 
-    async fn handle_input(&mut self, session_id: u32, data: &[u8]) -> Result<()> {
+    async fn handle_input(&mut self, session_id: Uuid, data: &[u8]) -> Result<()> {
         self.check_rate_limit().await?;
 
         let mut sessions = self.sessions.lock().await;
-        let session = sessions
-            .get_mut(&session_id)
-            .ok_or_else(|| AgentError::SessionNotFound(session_id))?;
+        let session = sessions.get_mut(&session_id).ok_or_else(|| {
+            AgentError::SessionError(format!("Session not found: {}", session_id))
+        })?;
 
         // Update activity timestamp
         session.last_activity = std::time::Instant::now();
@@ -521,11 +557,11 @@ impl Agent {
         Ok(())
     }
 
-    async fn resize_terminal(&mut self, session_id: u32, cols: u16, rows: u16) -> Result<()> {
+    async fn resize_terminal(&mut self, session_id: Uuid, cols: u16, rows: u16) -> Result<()> {
         let sessions = self.sessions.lock().await;
-        let session = sessions
-            .get(&session_id)
-            .ok_or_else(|| AgentError::SessionNotFound(session_id))?;
+        let session = sessions.get(&session_id).ok_or_else(|| {
+            AgentError::SessionError(format!("Session not found: {}", session_id))
+        })?;
 
         // Send resize event (currently not fully implemented)
         let _ = session.resize_tx.try_send((cols, rows));
@@ -539,7 +575,7 @@ impl Agent {
         Ok(())
     }
 
-    async fn end_session(&mut self, session_id: u32) -> Result<()> {
+    async fn end_session(&mut self, session_id: Uuid) -> Result<()> {
         let mut sessions = self.sessions.lock().await;
         if let Some(session) = sessions.remove(&session_id) {
             // Drop channels to signal tasks to stop
@@ -560,7 +596,7 @@ impl Agent {
         let now = std::time::Instant::now();
         let timeout = std::time::Duration::from_secs(SESSION_IDLE_TIMEOUT_SECS);
 
-        let expired: Vec<u32> = sessions
+        let expired: Vec<Uuid> = sessions
             .iter()
             .filter(|(_, session)| now.duration_since(session.last_activity) > timeout)
             .map(|(id, _)| *id)
@@ -583,7 +619,7 @@ impl Agent {
 
     async fn cleanup_sessions(&mut self) {
         let mut sessions = self.sessions.lock().await;
-        let session_ids: Vec<u32> = sessions.keys().copied().collect();
+        let session_ids: Vec<Uuid> = sessions.keys().copied().collect();
 
         for session_id in session_ids {
             if let Some(session) = sessions.remove(&session_id) {

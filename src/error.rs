@@ -37,9 +37,6 @@ pub enum AgentError {
     #[error("Device code flow expired")]
     DeviceCodeExpired,
 
-    #[error("Session not found: {0}")]
-    SessionNotFound(u32),
-
     #[error("Session error: {0}")]
     SessionError(String),
 
