@@ -145,7 +145,7 @@ impl Config {
         // Validate tls_cert_fingerprint if set
         if let Some(ref fingerprint) = self.tls_cert_fingerprint {
             // Remove common separators
-            let clean = fingerprint.replace(':', "").replace(' ', "");
+            let clean = fingerprint.replace([':', ' '], "");
 
             // Check if valid hex string
             if hex::decode(&clean).is_err() {

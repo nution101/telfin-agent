@@ -66,8 +66,9 @@ pub fn start_service() -> Result<()> {
 
     #[cfg(target_os = "macos")]
     {
-        let home_dir = dirs::home_dir()
-            .ok_or_else(|| AgentError::ConfigError("Could not determine home directory".to_string()))?;
+        let home_dir = dirs::home_dir().ok_or_else(|| {
+            AgentError::ConfigError("Could not determine home directory".to_string())
+        })?;
         let plist_file = home_dir
             .join("Library")
             .join("LaunchAgents")

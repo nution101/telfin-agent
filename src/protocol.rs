@@ -61,6 +61,7 @@ impl Message {
     }
 
     /// Create a close message
+    #[allow(dead_code)]
     pub fn close(session_id: Uuid) -> Self {
         Self::new(MessageType::Close, session_id, vec![])
     }
@@ -170,6 +171,7 @@ pub struct ResizePayload {
 
 impl ResizePayload {
     /// Encode resize payload with sub-type header
+    #[allow(dead_code)]
     pub fn encode(&self) -> Vec<u8> {
         let mut buffer = Vec::with_capacity(5);
         buffer.push(DataSubType::Resize as u8);
@@ -210,6 +212,7 @@ impl ResizePayload {
     }
 
     /// Decode resize payload without sub-type header (for backward compatibility)
+    #[allow(dead_code)]
     pub fn decode_raw(data: &[u8]) -> Result<Self> {
         if data.len() != 4 {
             return Err(AgentError::ProtocolError(format!(

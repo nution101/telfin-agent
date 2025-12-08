@@ -96,6 +96,7 @@ async fn main() -> Result<()> {
                         // Token expired - delete and re-authenticate automatically
                         tracing::info!("Token expired, starting fresh authentication");
                         keychain::delete_token_async().await.ok();
+                        keychain::delete_refresh_token_async().await.ok();
                         println!("Session expired. Starting authentication...\n");
                         auth::device_code_flow(&server).await?;
                         println!("\n✓ Login successful!\n");
@@ -134,7 +135,9 @@ async fn main() -> Result<()> {
 
             // Check if service is installed, suggest install for persistent operation
             if !service::is_installed() {
-                println!("\nTip: Run 'telfin install' to run in the background and auto-start on boot.");
+                println!(
+                    "\nTip: Run 'telfin install' to run in the background and auto-start on boot."
+                );
                 println!("     Press Ctrl+C to stop this foreground session.\n");
             }
 
@@ -159,6 +162,7 @@ async fn main() -> Result<()> {
         }
         Commands::Logout => {
             keychain::delete_token_async().await?;
+            keychain::delete_refresh_token_async().await?;
             println!("✓ Logged out successfully");
             Ok(())
         }
@@ -181,6 +185,7 @@ async fn main() -> Result<()> {
                     } else {
                         // Token expired - delete and re-authenticate automatically
                         keychain::delete_token_async().await.ok();
+                        keychain::delete_refresh_token_async().await.ok();
                         println!("Step 1/4: Session expired, re-authenticating...\n");
                         auth::device_code_flow(&server).await?;
                         println!("\n✓ Authentication complete!\n");

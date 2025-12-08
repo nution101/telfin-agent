@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 /// Certificate verifier that pins to a specific SHA-256 fingerprint
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct PinnedCertVerifier {
     expected_fingerprint: Vec<u8>,
 }
@@ -14,7 +15,7 @@ pub struct PinnedCertVerifier {
 impl PinnedCertVerifier {
     pub fn new(fingerprint_hex: &str) -> Result<Self> {
         // Parse hex fingerprint (with or without colons)
-        let clean = fingerprint_hex.replace(':', "").replace(' ', "");
+        let clean = fingerprint_hex.replace([':', ' '], "");
         let bytes = hex::decode(&clean).map_err(|e| {
             AgentError::ConfigError(format!("Invalid certificate fingerprint: {}", e))
         })?;
@@ -41,7 +42,7 @@ impl PinnedCertVerifier {
             tracing::error!(
                 "Certificate fingerprint mismatch! Expected: {}, got: {}",
                 hex::encode(&self.expected_fingerprint),
-                hex::encode(&fingerprint)
+                hex::encode(fingerprint)
             );
             Err(rustls::Error::General(
                 "Certificate fingerprint mismatch".into(),
@@ -98,6 +99,7 @@ impl ServerCertVerifier for PinnedCertVerifier {
 }
 
 /// Build TLS config, optionally with certificate pinning
+#[allow(dead_code)]
 pub fn build_tls_config(fingerprint: Option<&str>) -> Result<rustls::ClientConfig> {
     let builder = rustls::ClientConfig::builder_with_provider(Arc::new(
         rustls::crypto::aws_lc_rs::default_provider(),

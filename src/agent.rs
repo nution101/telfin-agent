@@ -1,5 +1,7 @@
+use crate::auth;
 use crate::config::Config;
 use crate::error::{AgentError, Result};
+use crate::keychain;
 use crate::protocol::{DataSubType, Message, MessageType, ResizePayload};
 use futures_util::{SinkExt, StreamExt};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
@@ -18,6 +20,10 @@ const MAX_CONCURRENT_SESSIONS: usize = 10;
 const MESSAGE_BURST_LIMIT: usize = 100;
 const RATE_LIMIT_WINDOW_SECS: u64 = 1;
 const SESSION_IDLE_TIMEOUT_SECS: u64 = 3600;
+/// Refresh token 5 minutes before expiry
+const TOKEN_REFRESH_THRESHOLD_SECS: u64 = 300;
+/// Maximum backoff for token refresh retries
+const MAX_REFRESH_BACKOFF_SECS: u64 = 300;
 
 #[allow(dead_code)]
 type WsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
@@ -139,6 +145,12 @@ impl Agent {
         let success_threshold = Duration::from_secs(10);
 
         loop {
+            // Check and refresh token before connecting
+            if let Err(e) = self.ensure_valid_token().await {
+                tracing::error!("Failed to ensure valid token: {}", e);
+                // Still try to connect with current token - gateway will reject if invalid
+            }
+
             tokio::select! {
                 _ = shutdown_rx.changed() => {
                     if *shutdown_rx.borrow() {
@@ -175,6 +187,64 @@ impl Agent {
                 }
             }
         }
+    }
+
+    /// Ensure we have a valid token, refreshing if necessary
+    async fn ensure_valid_token(&mut self) -> Result<()> {
+        // Check if current token is expiring soon
+        if !auth::token_expiring_soon(&self.token, TOKEN_REFRESH_THRESHOLD_SECS) {
+            return Ok(());
+        }
+
+        tracing::info!("Access token expiring soon, attempting refresh...");
+
+        // Get refresh token from keychain
+        let refresh_token = match keychain::get_refresh_token_async().await? {
+            Some(token) => token,
+            None => {
+                tracing::warn!("No refresh token available, continuing with current token");
+                return Ok(());
+            }
+        };
+
+        // Attempt to refresh with exponential backoff
+        let mut backoff = Duration::from_secs(1);
+        let max_backoff = Duration::from_secs(MAX_REFRESH_BACKOFF_SECS);
+        let max_attempts = 10;
+
+        for attempt in 1..=max_attempts {
+            match auth::refresh_access_token(&self.config.server_url, &refresh_token).await {
+                Ok(token_pair) => {
+                    // Save new tokens to keychain
+                    keychain::save_token_async(token_pair.access_token.clone()).await?;
+                    keychain::save_refresh_token_async(token_pair.refresh_token).await?;
+
+                    // Update in-memory token
+                    self.token = token_pair.access_token;
+
+                    tracing::info!("Token refreshed successfully on attempt {}", attempt);
+                    return Ok(());
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Token refresh attempt {} failed: {}, retrying in {:?}",
+                        attempt,
+                        e,
+                        backoff
+                    );
+
+                    if attempt < max_attempts {
+                        // Add jitter to backoff (0-1 second)
+                        let jitter = Duration::from_millis(rand::random::<u64>() % 1000);
+                        tokio::time::sleep(backoff + jitter).await;
+                        backoff = (backoff * 2).min(max_backoff);
+                    }
+                }
+            }
+        }
+
+        tracing::warn!("All token refresh attempts failed, will try with current token");
+        Ok(())
     }
 
     /// Connect to gateway and run the event loop.

@@ -32,7 +32,26 @@ struct TokenRequest {
 #[derive(Debug, Deserialize)]
 struct TokenResponse {
     access_token: Option<String>,
+    refresh_token: Option<String>,
     error: Option<String>,
+}
+
+/// Token pair containing both access and refresh tokens
+#[derive(Debug, Clone)]
+pub struct TokenPair {
+    pub access_token: String,
+    pub refresh_token: String,
+}
+
+#[derive(Debug, Serialize)]
+struct RefreshRequest {
+    refresh_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RefreshResponse {
+    access_token: String,
+    refresh_token: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -55,6 +74,7 @@ struct RegisterMachineResponse {
 }
 
 /// Result of machine registration
+#[allow(dead_code)]
 pub struct MachineRegistration {
     pub machine_id: Uuid,
     pub agent_token: String,
@@ -74,7 +94,7 @@ pub async fn device_code_flow(server_url: &str) -> Result<()> {
 
     // Step 3: Poll for token
     tracing::info!("Waiting for authorization...");
-    let token = poll_for_token(
+    let token_pair = poll_for_token(
         &client,
         &api_url,
         &device_code_resp.device_code,
@@ -83,10 +103,11 @@ pub async fn device_code_flow(server_url: &str) -> Result<()> {
     )
     .await?;
 
-    // Step 4: Store token in keychain (using async wrapper for Linux compatibility)
-    keychain::save_token_async(token).await?;
+    // Step 4: Store both tokens in keychain (using async wrapper for Linux compatibility)
+    keychain::save_token_async(token_pair.access_token).await?;
+    keychain::save_refresh_token_async(token_pair.refresh_token).await?;
 
-    tracing::info!("Token saved to keychain");
+    tracing::info!("Tokens saved to keychain");
     Ok(())
 }
 
@@ -142,7 +163,7 @@ async fn poll_for_token(
     device_code: &str,
     interval: u64,
     expires_in: u64,
-) -> Result<String> {
+) -> Result<TokenPair> {
     let url = format!("{}/device/token", api_url);
     let poll_interval = Duration::from_secs(interval.max(5));
     let max_attempts = (expires_in / interval).max(1);
@@ -175,8 +196,13 @@ async fn poll_for_token(
             }
         };
 
-        if let Some(token) = token_resp.access_token {
-            return Ok(token);
+        if let (Some(access_token), Some(refresh_token)) =
+            (token_resp.access_token, token_resp.refresh_token)
+        {
+            return Ok(TokenPair {
+                access_token,
+                refresh_token,
+            });
         }
 
         if let Some(error) = &token_resp.error {
@@ -215,6 +241,49 @@ async fn poll_for_token(
     }
 
     Err(AgentError::DeviceCodeExpired)
+}
+
+/// Refresh access token using stored refresh token
+/// Returns new TokenPair on success
+pub async fn refresh_access_token(server_url: &str, refresh_token: &str) -> Result<TokenPair> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| AgentError::AuthError(format!("Failed to create HTTP client: {}", e)))?;
+
+    let url = format!("{}/api/auth/refresh", server_url);
+
+    let request = RefreshRequest {
+        refresh_token: refresh_token.to_string(),
+    };
+
+    let response = client
+        .post(&url)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| AgentError::AuthError(format!("Refresh request failed: {}", e)))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(AgentError::AuthError(format!(
+            "Token refresh failed: {} - {}",
+            status, error_text
+        )));
+    }
+
+    let refresh_resp: RefreshResponse = response
+        .json()
+        .await
+        .map_err(|e| AgentError::AuthError(format!("Failed to parse refresh response: {}", e)))?;
+
+    tracing::info!("Access token refreshed successfully");
+
+    Ok(TokenPair {
+        access_token: refresh_resp.access_token,
+        refresh_token: refresh_resp.refresh_token,
+    })
 }
 
 /// Register or get existing machine with the gateway
@@ -266,6 +335,7 @@ pub async fn register_machine(
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct TokenClaims {
     pub exp: usize,
     pub iat: usize,
