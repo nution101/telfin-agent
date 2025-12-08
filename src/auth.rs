@@ -29,11 +29,17 @@ struct TokenRequest {
     grant_type: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
 struct TokenResponse {
     access_token: Option<String>,
     refresh_token: Option<String>,
     error: Option<String>,
+    // Additional fields from gateway (ignored but must be allowed)
+    #[serde(default)]
+    token_type: Option<String>,
+    #[serde(default)]
+    expires_in: Option<i64>,
 }
 
 /// Token pair containing both access and refresh tokens
