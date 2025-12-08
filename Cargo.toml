@@ -46,8 +46,8 @@ shell-words = "1.1"
 jsonwebtoken = "9.3"
 rand = "0.8"
 
-# Self-update from GitHub releases
-self_update = { version = "0.39", features = ["archive-tar", "archive-zip", "compression-flate2"] }
+# Self-update from GitHub releases (rustls avoids OpenSSL cross-compilation issues)
+self_update = { version = "0.39", default-features = false, features = ["archive-tar", "archive-zip", "compression-flate2", "rustls"] }
 semver = "1.0"
 
 # TLS certificate pinning
