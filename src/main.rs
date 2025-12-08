@@ -95,28 +95,16 @@ async fn main() -> Result<()> {
                 config.machine_name = name;
             }
 
-            // Get access token from keychain, validate it, auto-login if missing or expired
-            let access_token = match keychain::get_token_async().await? {
-                Some(token) => {
-                    // Validate token BEFORE claiming authenticated
-                    if auth::validate_token_locally(&token).is_ok() {
-                        tracing::debug!("Existing token is valid");
-                        token
-                    } else {
-                        // Token expired - delete and re-authenticate automatically
-                        tracing::info!("Token expired, starting fresh authentication");
-                        keychain::delete_token_async().await.ok();
-                        keychain::delete_refresh_token_async().await.ok();
-                        println!("Session expired. Starting authentication...\n");
-                        auth::device_code_flow(&server).await?;
-                        println!("\n✓ Login successful!\n");
-                        keychain::get_token_async()
-                            .await?
-                            .ok_or(error::AgentError::NotLoggedIn)?
-                    }
+            // Get access token - this will automatically refresh if expired
+            // IMPORTANT: Never delete tokens here - only on explicit logout
+            let access_token = match auth::get_valid_access_token(&server).await {
+                Ok(token) => {
+                    tracing::debug!("Got valid access token (may have been refreshed)");
+                    token
                 }
-                None => {
-                    println!("Not logged in. Starting authentication...\n");
+                Err(_) => {
+                    // Token refresh failed - need to re-authenticate
+                    println!("Session expired. Starting authentication...\n");
                     auth::device_code_flow(&server).await?;
                     println!("\n✓ Login successful!\n");
                     keychain::get_token_async()
@@ -125,12 +113,7 @@ async fn main() -> Result<()> {
                 }
             };
 
-            // Check if token is expiring soon (within 5 minutes)
-            if auth::token_expiring_soon(&access_token, 300) {
-                tracing::warn!(
-                    "Token will expire soon. Consider running 'telfin login' to refresh."
-                );
-            }
+            // Note: token_expiring_soon check removed - get_valid_access_token handles this
 
             // Register machine with gateway to get agent token
             let registration =
@@ -198,26 +181,15 @@ async fn main() -> Result<()> {
             let mut config = config::Config::load()?;
             config.server_url = server.clone();
 
-            // Step 1: Check if logged in with VALID token, auto-login if missing or expired
-            let access_token = match keychain::get_token_async().await? {
-                Some(token) => {
-                    // Validate token BEFORE claiming authenticated
-                    if auth::validate_token_locally(&token).is_ok() {
-                        println!("Step 1/4: Already authenticated ✓\n");
-                        token
-                    } else {
-                        // Token expired - delete and re-authenticate automatically
-                        keychain::delete_token_async().await.ok();
-                        keychain::delete_refresh_token_async().await.ok();
-                        println!("Step 1/4: Session expired, re-authenticating...\n");
-                        auth::device_code_flow(&server).await?;
-                        println!("\n✓ Authentication complete!\n");
-                        keychain::get_token_async()
-                            .await?
-                            .ok_or(error::AgentError::NotLoggedIn)?
-                    }
+            // Step 1: Get valid access token (automatically refreshes if expired)
+            // IMPORTANT: Never delete tokens here - only on explicit logout
+            let access_token = match auth::get_valid_access_token(&server).await {
+                Ok(token) => {
+                    println!("Step 1/4: Authenticated ✓\n");
+                    token
                 }
-                None => {
+                Err(_) => {
+                    // Token refresh failed - need to authenticate
                     println!("Step 1/4: Authentication required\n");
                     auth::device_code_flow(&server).await?;
                     println!("\n✓ Authentication complete!\n");

@@ -334,6 +334,83 @@ pub async fn register_machine(
     })
 }
 
+/// Get a valid access token, automatically refreshing if expired
+/// 
+/// This is the SAFE way to get an access token that:
+/// 1. First checks if stored access token is valid
+/// 2. If expired, tries to refresh using stored refresh token
+/// 3. Only returns error (requiring re-login) if refresh fails
+/// 
+/// IMPORTANT: This function NEVER deletes tokens. Only explicit logout should do that.
+pub async fn get_valid_access_token(server_url: &str) -> Result<String> {
+    use std::time::Duration;
+    
+    // Step 1: Try to get stored access token
+    let access_token = match keychain::get_token_async().await? {
+        Some(token) => token,
+        None => {
+            tracing::debug!("No access token stored");
+            return Err(AgentError::NotLoggedIn);
+        }
+    };
+    
+    // Step 2: Check if access token is still valid (with 30 second buffer)
+    if validate_token_locally(&access_token).is_ok() && !token_expiring_soon(&access_token, 30) {
+        tracing::debug!("Access token is valid");
+        return Ok(access_token);
+    }
+    
+    tracing::info!("Access token expired or expiring soon, attempting refresh...");
+    
+    // Step 3: Get refresh token (which has 9 month expiration)
+    let refresh_token = match keychain::get_refresh_token_async().await? {
+        Some(token) => token,
+        None => {
+            tracing::warn!("No refresh token available");
+            return Err(AgentError::NotLoggedIn);
+        }
+    };
+    
+    // Step 4: Try to refresh with exponential backoff
+    let mut backoff = Duration::from_secs(1);
+    let max_backoff = Duration::from_secs(30);
+    let max_attempts = 5;
+    
+    for attempt in 1..=max_attempts {
+        match refresh_access_token(server_url, &refresh_token).await {
+            Ok(token_pair) => {
+                // Save new tokens to keychain
+                keychain::save_token_async(token_pair.access_token.clone()).await?;
+                keychain::save_refresh_token_async(token_pair.refresh_token).await?;
+                
+                tracing::info!("Token refreshed successfully on attempt {}", attempt);
+                return Ok(token_pair.access_token);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Token refresh attempt {} failed: {}, {}",
+                    attempt,
+                    e,
+                    if attempt < max_attempts { "retrying..." } else { "giving up" }
+                );
+                
+                if attempt < max_attempts {
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(max_backoff);
+                }
+            }
+        }
+    }
+    
+    // All refresh attempts failed - refresh token may be revoked/expired
+    // Return error requiring re-login, but DO NOT delete tokens
+    // (they may still work if network was temporarily unavailable)
+    tracing::error!("All token refresh attempts failed, re-authentication required");
+    Err(AgentError::AuthError(
+        "Token refresh failed, please re-authenticate with 'telfin login'".to_string()
+    ))
+}
+
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 pub struct TokenClaims {
