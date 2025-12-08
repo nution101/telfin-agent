@@ -148,7 +148,10 @@ async fn main() -> Result<()> {
                 tokio::spawn(async {
                     if let Some(version) = update::check_for_updates_quiet().await {
                         // Log only, don't print to stdout to avoid cluttering agent output
-                        tracing::info!("Update {} available. Run 'telfin update' to install.", version);
+                        tracing::info!(
+                            "Update {} available. Run 'telfin update' to install.",
+                            version
+                        );
                     }
                 });
             }

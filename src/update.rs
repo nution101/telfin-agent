@@ -21,6 +21,7 @@ pub struct UpdateStatus {
     pub latest_version: Version,
     pub update_available: bool,
     pub release_url: String,
+    #[allow(dead_code)]
     pub release_notes: Option<String>,
 }
 
@@ -30,7 +31,7 @@ pub async fn check_for_updates_quiet() -> Option<Version> {
     // Add jitter (0-30s) to avoid all agents hitting GitHub at once
     let jitter = rand::random::<u64>() % 30;
     tokio::time::sleep(std::time::Duration::from_secs(jitter)).await;
-    
+
     match check_for_updates().await {
         Ok(status) if status.update_available => {
             tracing::info!(
@@ -53,9 +54,8 @@ pub async fn check_for_updates_quiet() -> Option<Version> {
 
 /// Check for available updates on GitHub
 pub async fn check_for_updates() -> Result<UpdateStatus> {
-    let current = Version::parse(CURRENT_VERSION).map_err(|e| {
-        AgentError::UpdateError(format!("Invalid current version: {}", e))
-    })?;
+    let current = Version::parse(CURRENT_VERSION)
+        .map_err(|e| AgentError::UpdateError(format!("Invalid current version: {}", e)))?;
 
     tracing::debug!("Checking for updates, current version: {}", current);
 
@@ -65,7 +65,9 @@ pub async fn check_for_updates() -> Result<UpdateStatus> {
             .repo_owner(GITHUB_OWNER)
             .repo_name(GITHUB_REPO)
             .build()
-            .map_err(|e| AgentError::UpdateError(format!("Failed to configure release check: {}", e)))?
+            .map_err(|e| {
+                AgentError::UpdateError(format!("Failed to configure release check: {}", e))
+            })?
             .fetch()
             .map_err(|e| AgentError::UpdateError(format!("Failed to fetch releases: {}", e)))
     })
@@ -134,7 +136,10 @@ pub async fn perform_update(force: bool) -> Result<()> {
     let status = check_for_updates().await?;
 
     if !status.update_available && !force {
-        println!("Already running the latest version ({})", status.current_version);
+        println!(
+            "Already running the latest version ({})",
+            status.current_version
+        );
         return Ok(());
     }
 
@@ -147,9 +152,10 @@ pub async fn perform_update(force: bool) -> Result<()> {
     let binary_name = get_binary_name();
 
     // Get current executable path for backup
-    let current_exe = env::current_exe()
-        .map_err(|e| AgentError::UpdateError(format!("Cannot determine current executable: {}", e)))?;
-    
+    let current_exe = env::current_exe().map_err(|e| {
+        AgentError::UpdateError(format!("Cannot determine current executable: {}", e))
+    })?;
+
     let backup_path = current_exe.with_extension("bak");
 
     tracing::info!(
@@ -181,8 +187,13 @@ pub async fn perform_update(force: bool) -> Result<()> {
             .map_err(|e| {
                 // Attempt rollback if backup exists
                 if backup_path_clone.exists() {
-                    tracing::warn!("Update failed, attempting rollback from {:?}", backup_path_clone);
-                    if let Err(rollback_err) = std::fs::rename(&backup_path_clone, &current_exe_clone) {
+                    tracing::warn!(
+                        "Update failed, attempting rollback from {:?}",
+                        backup_path_clone
+                    );
+                    if let Err(rollback_err) =
+                        std::fs::rename(&backup_path_clone, &current_exe_clone)
+                    {
                         tracing::error!("Rollback failed: {}", rollback_err);
                     } else {
                         tracing::info!("Rollback successful");
@@ -195,7 +206,10 @@ pub async fn perform_update(force: bool) -> Result<()> {
     .map_err(|e| AgentError::UpdateError(format!("Task join error: {}", e)))??;
 
     if update_result.updated() {
-        println!("\n✅ Successfully updated to version {}", update_result.version());
+        println!(
+            "\n✅ Successfully updated to version {}",
+            update_result.version()
+        );
         println!("\nThe agent will use the new version on next restart.");
         println!("If running as a service, restart with:");
         print_restart_instructions();
@@ -228,15 +242,19 @@ pub fn display_update_status(status: &UpdateStatus) {
         println!();
         println!("Run 'telfin update' to install the update.");
     } else {
-        println!("✅ You're running the latest version ({})", status.current_version);
+        println!(
+            "✅ You're running the latest version ({})",
+            status.current_version
+        );
     }
 }
 
 /// Get the backup path for rollback
 #[allow(dead_code)]
 pub fn get_backup_path() -> Result<PathBuf> {
-    let current_exe = env::current_exe()
-        .map_err(|e| AgentError::UpdateError(format!("Cannot determine current executable: {}", e)))?;
+    let current_exe = env::current_exe().map_err(|e| {
+        AgentError::UpdateError(format!("Cannot determine current executable: {}", e))
+    })?;
     Ok(current_exe.with_extension("bak"))
 }
 
