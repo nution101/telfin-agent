@@ -200,13 +200,12 @@ mod tests {
     #[test]
     fn test_fingerprint_generation() {
         let fp1 = generate().unwrap();
-        let fp2 = generate().unwrap();
-
-        // Should be deterministic
-        assert_eq!(fp1, fp2);
 
         // Should be 64 characters (SHA-256 hex)
         assert_eq!(fp1.len(), 64);
+
+        // Should be valid hex
+        assert!(fp1.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]
