@@ -19,6 +19,7 @@ Telfin Agent runs on your local machine and establishes a secure WebSocket tunne
 - **Cross-Platform** - Linux, macOS, Windows (x64 and ARM64)
 - **Lightweight** - Small binary (~5MB), minimal resource usage
 - **Auto-Reconnect** - Handles network interruptions gracefully
+- **Auto-Update** - Built-in update checker with rollback support
 - **Keychain Integration** - Secure credential storage using OS keychains
 - **Service Mode** - Run as system service with auto-start on boot
 - **Browser-Based** - Access terminal from any modern web browser
@@ -60,6 +61,16 @@ telfin logout
 telfin install
 ```
 Configures systemd (Linux), launchd (macOS), or Windows Service. See [AUTO_START_GUIDE.md](AUTO_START_GUIDE.md).
+
+### Update Agent
+```bash
+# Check for available updates
+telfin update --check
+
+# Download and install update (with automatic rollback on failure)
+telfin update
+```
+The agent also checks for updates on startup (can be disabled in config).
 
 ## Platform Support
 
@@ -110,7 +121,8 @@ Config location:
   "heartbeat_interval": 15,
   "log_level": "info",
   "shell_command": "/bin/bash -l",
-  "tls_cert_fingerprint": null
+  "tls_cert_fingerprint": null,
+  "auto_update_check": true
 }
 ```
 
@@ -122,6 +134,7 @@ Config location:
 - `log_level` - debug, info, warn, error (default: info)
 - `shell_command` - Terminal command (default: /bin/bash -l)
 - `tls_cert_fingerprint` - Optional SHA-256 pin (default: null)
+- `auto_update_check` - Check for updates on startup (default: true)
 
 See [TLS_PINNING.md](TLS_PINNING.md) for certificate pinning.
 
