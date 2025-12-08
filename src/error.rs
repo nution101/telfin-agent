@@ -46,6 +46,9 @@ pub enum AgentError {
     #[error("Connection error: {0}")]
     ConnectionError(String),
 
+    #[error("Update error: {0}")]
+    UpdateError(String),
+
     #[error("{0}")]
     Other(String),
 }

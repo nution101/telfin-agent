@@ -12,6 +12,7 @@ mod keychain;
 mod protocol;
 mod service;
 mod tls;
+mod update;
 
 use crate::error::Result;
 
@@ -48,6 +49,15 @@ enum Commands {
     },
     /// Uninstall background service
     Uninstall,
+    /// Check for and install updates from GitHub releases
+    Update {
+        /// Only check for updates, don't install
+        #[arg(long)]
+        check: bool,
+        /// Force update even if already on latest version
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[tokio::main]
@@ -132,6 +142,16 @@ async fn main() -> Result<()> {
             // Create and run agent with agent token (not access token)
             let mut agent =
                 agent::Agent::new(config.clone(), registration.agent_token, fingerprint)?;
+
+            // Check for updates in background if enabled
+            if config.auto_update_check {
+                tokio::spawn(async {
+                    if let Some(version) = update::check_for_updates_quiet().await {
+                        // Log only, don't print to stdout to avoid cluttering agent output
+                        tracing::info!("Update {} available. Run 'telfin update' to install.", version);
+                    }
+                });
+            }
 
             // Check if service is installed, suggest install for persistent operation
             if !service::is_installed() {
@@ -248,6 +268,24 @@ async fn main() -> Result<()> {
         Commands::Uninstall => {
             service::uninstall()?;
             Ok(())
+        }
+        Commands::Update { check, force } => {
+            if check {
+                // Just check for updates
+                match update::check_for_updates().await {
+                    Ok(status) => {
+                        update::display_update_status(&status);
+                        Ok(())
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to check for updates: {}", e);
+                        Err(e)
+                    }
+                }
+            } else {
+                // Perform update
+                update::perform_update(force).await
+            }
         }
     }
 }

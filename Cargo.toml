@@ -1,6 +1,6 @@
 [package]
 name = "telfin-agent"
-version = "0.4.0"
+version = "0.5.1"
 edition = "2021"
 description = "Telfin SSH Tunnel Agent"
 license = "MIT"
@@ -45,6 +45,10 @@ url = "2.5"
 shell-words = "1.1"
 jsonwebtoken = "9.3"
 rand = "0.8"
+
+# Self-update from GitHub releases
+self_update = { version = "0.39", features = ["archive-tar", "archive-zip", "compression-flate2"] }
+semver = "1.0"
 
 # TLS certificate pinning
 rustls = { version = "0.23", default-features = false, features = ["std", "aws-lc-rs"] }

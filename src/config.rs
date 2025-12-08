@@ -41,6 +41,13 @@ pub struct Config {
     /// If None, standard certificate validation is used
     #[serde(default)]
     pub tls_cert_fingerprint: Option<String>,
+    /// Whether to check for updates on startup (default: true)
+    #[serde(default = "default_auto_update_check")]
+    pub auto_update_check: bool,
+}
+
+fn default_auto_update_check() -> bool {
+    true
 }
 
 impl Default for Config {
@@ -53,6 +60,7 @@ impl Default for Config {
             log_level: "info".to_string(),
             shell_command: None,
             tls_cert_fingerprint: None,
+            auto_update_check: true,
         }
     }
 }
