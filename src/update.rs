@@ -122,6 +122,23 @@ fn get_platform_asset_name() -> Result<&'static str> {
     }
 }
 
+/// Get the target identifier for self_update asset matching
+/// Maps Rust target triples to our custom asset naming convention
+fn get_target_identifier() -> Result<&'static str> {
+    match (env::consts::OS, env::consts::ARCH) {
+        ("linux", "x86_64") => Ok("linux-amd64"),
+        ("linux", "aarch64") => Ok("linux-arm64"),
+        ("macos", "x86_64") => Ok("darwin-amd64"),
+        ("macos", "aarch64") => Ok("darwin-arm64"),
+        ("windows", "x86_64") => Ok("windows-amd64"),
+        (os, arch) => Err(AgentError::UpdateError(format!(
+            "Unsupported platform: {}-{}",
+            os, arch
+        ))),
+    }
+}
+
+
 /// Get the binary name inside the archive
 fn get_binary_name() -> &'static str {
     if cfg!(windows) {
@@ -149,7 +166,9 @@ pub async fn perform_update(force: bool) -> Result<()> {
     );
 
     let _asset_name = get_platform_asset_name()?;
+    let target_id = get_target_identifier()?;
     let binary_name = get_binary_name();
+
 
     // Get current executable path for backup
     let current_exe = env::current_exe().map_err(|e| {
@@ -168,6 +187,7 @@ pub async fn perform_update(force: bool) -> Result<()> {
 
     // Clone values for the blocking task
     let binary_name_owned = binary_name.to_string();
+    let target_id_owned = target_id.to_string();
     let backup_path_clone = backup_path.clone();
     let current_exe_clone = current_exe.clone();
 
@@ -177,7 +197,9 @@ pub async fn perform_update(force: bool) -> Result<()> {
             .repo_owner(GITHUB_OWNER)
             .repo_name(GITHUB_REPO)
             .bin_name(&binary_name_owned)
+            .identifier(&target_id_owned)
             .current_version(CURRENT_VERSION)
+
             .show_download_progress(true)
             .show_output(true)
             .no_confirm(true)
