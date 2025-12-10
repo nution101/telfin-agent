@@ -161,6 +161,19 @@ impl Agent {
                 }
                 result = self.connect_and_run() => {
                     let connection_duration = result.1;
+                    
+                    // CRITICAL: Clean up ALL sessions when connection drops.
+                    // This prevents stale PTY sessions from using old session IDs
+                    // that the gateway can't route back to the browser.
+                    let session_count = self.sessions.lock().await.len();
+                    if session_count > 0 {
+                        tracing::info!(
+                            "Connection ended, cleaning up {} active session(s) to prevent stale session IDs",
+                            session_count
+                        );
+                        self.cleanup_sessions().await;
+                    }
+                    
                     match result.0 {
                         Ok(_) => {
                             tracing::info!("Connection closed cleanly after {:?}", connection_duration);
