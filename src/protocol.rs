@@ -15,6 +15,8 @@ pub enum MessageType {
     Ping = 0x03,
     Pong = 0x04,
     Error = 0x05,
+    /// Version check notification from gateway
+    VersionCheck = 0x20,
 }
 
 impl MessageType {
@@ -25,6 +27,7 @@ impl MessageType {
             0x03 => Some(MessageType::Ping),
             0x04 => Some(MessageType::Pong),
             0x05 => Some(MessageType::Error),
+            0x20 => Some(MessageType::VersionCheck),
             _ => None,
         }
     }

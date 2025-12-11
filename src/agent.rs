@@ -27,6 +27,26 @@ const TOKEN_REFRESH_THRESHOLD_SECS: u64 = 300;
 /// Maximum backoff for token refresh retries
 const MAX_REFRESH_BACKOFF_SECS: u64 = 300;
 
+/// Simple semver comparison - returns true if latest > current
+fn needs_update(current: &str, latest: &str) -> bool {
+    let parse_version = |v: &str| -> Option<(u32, u32, u32)> {
+        let parts: Vec<&str> = v.trim_start_matches('v').splitn(3, '.').collect();
+        if parts.len() >= 2 {
+            let major = parts[0].parse().ok()?;
+            let minor = parts[1].parse().ok()?;
+            let patch = parts.get(2).and_then(|p| p.parse().ok()).unwrap_or(0);
+            Some((major, minor, patch))
+        } else {
+            None
+        }
+    };
+
+    match (parse_version(current), parse_version(latest)) {
+        (Some(cur), Some(lat)) => lat > cur,
+        _ => false, // Can't compare, don't update
+    }
+}
+
 #[allow(dead_code)]
 type WsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -512,6 +532,10 @@ impl Agent {
                     error_msg
                 );
             }
+            MessageType::VersionCheck => {
+                // Version notification from gateway
+                self.handle_version_check(&msg.payload).await;
+            }
         }
 
         Ok(())
@@ -528,6 +552,57 @@ impl Agent {
             tracing::warn!("Received input but no persistent PTY exists");
         }
         Ok(())
+    }
+
+    /// Handle version check notification from gateway
+    async fn handle_version_check(&self, payload: &[u8]) {
+        // Parse version payload
+        #[derive(serde::Deserialize)]
+        struct VersionPayload {
+            latest_version: String,
+            #[allow(dead_code)]
+            download_url: String,
+        }
+
+        let version_info: VersionPayload = match serde_json::from_slice(payload) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::debug!("Failed to parse version payload: {}", e);
+                return;
+            }
+        };
+
+        let current_version = env!("CARGO_PKG_VERSION");
+
+        // Compare versions (simple semver comparison)
+        if needs_update(current_version, &version_info.latest_version) {
+            tracing::info!(
+                "New version available: {} -> {} (triggering auto-update)",
+                current_version,
+                version_info.latest_version
+            );
+
+            // Trigger auto-update
+            match crate::update::auto_update_if_available().await {
+                Ok(true) => {
+                    tracing::info!("Auto-update successful, restarting...");
+                    // Exit cleanly - service manager will restart us with new version
+                    std::process::exit(0);
+                }
+                Ok(false) => {
+                    tracing::debug!("No update performed");
+                }
+                Err(e) => {
+                    tracing::error!("Auto-update failed: {}", e);
+                }
+            }
+        } else {
+            tracing::debug!(
+                "Agent is up to date: {} >= {}",
+                current_version,
+                version_info.latest_version
+            );
+        }
     }
 
     /// Start a new persistent PTY session
