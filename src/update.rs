@@ -52,6 +52,28 @@ pub async fn check_for_updates_quiet() -> Option<Version> {
     }
 }
 
+/// Automatically check and apply updates on startup
+/// Returns Ok(true) if updated and restart needed, Ok(false) if no update, Err on failure
+pub async fn auto_update_if_available() -> Result<bool> {
+    // Quick check without jitter for startup
+    let status = check_for_updates().await?;
+    
+    if !status.update_available {
+        return Ok(false);
+    }
+    
+    tracing::info!(
+        "Auto-updating: {} -> {}",
+        status.current_version,
+        status.latest_version
+    );
+    
+    // Perform the update (this will download and replace the binary)
+    perform_update(false).await?;
+    
+    Ok(true)
+}
+
 /// Check for available updates on GitHub
 pub async fn check_for_updates() -> Result<UpdateStatus> {
     let current = Version::parse(CURRENT_VERSION)

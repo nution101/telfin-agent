@@ -37,6 +37,9 @@ enum Commands {
         machine_name: Option<String>,
         #[arg(long, default_value = "https://gateway.telfin.io")]
         server: String,
+        /// Disable auto-update check on startup
+        #[arg(long)]
+        no_update: bool,
     },
     /// Check agent status and connection info
     Status,
@@ -86,7 +89,27 @@ async fn main() -> Result<()> {
         Commands::Start {
             machine_name,
             server,
+            no_update,
         } => {
+            // Auto-update on startup (unless disabled)
+            // This ensures agents always run latest version
+            if !no_update {
+                tracing::info!("Checking for updates...");
+                match update::auto_update_if_available().await {
+                    Ok(true) => {
+                        println!("✓ Updated to new version. Please restart the agent.");
+                        std::process::exit(0);
+                    }
+                    Ok(false) => {
+                        tracing::debug!("Already running latest version");
+                    }
+                    Err(e) => {
+                        // Don't block on update errors - just log and continue
+                        tracing::warn!("Auto-update check failed: {} (continuing anyway)", e);
+                    }
+                }
+            }
+
             // Load or create config
             let mut config = config::Config::load()?;
             config.server_url = server.clone();
