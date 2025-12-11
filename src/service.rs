@@ -180,7 +180,7 @@ fn install_systemd_service() -> Result<()> {
 
     let service_file = service_dir.join("telfin-agent.service");
 
-    // Write systemd service file
+    // Write systemd service file with restart rate limiting
     let service_content = format!(
         r#"[Unit]
 Description=Telfin SSH Tunnel Agent
@@ -192,6 +192,14 @@ Type=simple
 ExecStart={} start
 Restart=always
 RestartSec=10
+
+# Self-healing: Limit restart rate to prevent tight loops
+# Maximum 5 restarts within 5 minutes
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Environment for logging
+Environment="RUST_LOG=info"
 
 [Install]
 WantedBy=default.target
@@ -306,7 +314,7 @@ fn install_launchd_service() -> Result<()> {
 
     let log_file = log_dir.join("agent.log");
 
-    // Write launchd plist file
+    // Write launchd plist file with restart throttling
     let plist_content = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -323,6 +331,8 @@ fn install_launchd_service() -> Result<()> {
     <true/>
     <key>KeepAlive</key>
     <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
     <key>StandardOutPath</key>
     <string>{}</string>
     <key>StandardErrorPath</key>

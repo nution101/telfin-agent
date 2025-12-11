@@ -1,7 +1,9 @@
 use crate::auth;
 use crate::config::Config;
 use crate::error::{AgentError, Result};
+use crate::health;
 use crate::keychain;
+use crate::network;
 use crate::protocol::{DataSubType, Message, MessageType, ResizePayload};
 use futures_util::{SinkExt, StreamExt};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
@@ -158,13 +160,32 @@ impl Agent {
             self.config.machine_name
         );
 
+        // Initialize health monitoring
+        health::init();
+        health::spawn_watchdog();
+
         let mut backoff = Duration::from_secs(1);
         let max_backoff = Duration::from_secs(60);
         // Threshold for considering a connection "successful" - if we were connected
         // for at least this long, reset the backoff on disconnect
         let success_threshold = Duration::from_secs(10);
+        
+        // Extract gateway host for network checks
+        let gateway_host = network::extract_host(&self.config.server_url)
+            .unwrap_or_else(|| "gateway.telfin.io".to_string());
 
         loop {
+            // PHASE 2: Network-aware reconnection
+            // Check network before attempting connection to avoid spinning
+            if !network::can_reach_host(&gateway_host) {
+                tracing::warn!("Network unreachable, waiting for connectivity...");
+                if !network::wait_for_network(&gateway_host, Duration::from_secs(300)).await {
+                    tracing::error!("Network wait timeout, will retry...");
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    continue;
+                }
+            }
+            
             // Check and refresh token before connecting
             if let Err(e) = self.ensure_valid_token().await {
                 tracing::error!("Failed to ensure valid token: {}", e);
@@ -385,7 +406,8 @@ impl Agent {
                             let _ = tx.send(WsMessage::Pong(data)).await;
                         }
                         Ok(WsMessage::Pong(_)) => {
-                            // Heartbeat response
+                            // Record heartbeat for health monitoring
+                            health::record_heartbeat();
                         }
                         Ok(WsMessage::Close(_)) => {
                             tracing::info!("Server closed connection");
@@ -413,6 +435,9 @@ impl Agent {
     }
 
     async fn handle_message(&mut self, data: &[u8], tx: mpsc::Sender<WsMessage>) -> Result<()> {
+        // Record activity for health monitoring
+        health::record_activity();
+        
         let msg = Message::decode(data)?;
 
         match msg.msg_type {
