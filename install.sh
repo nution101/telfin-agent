@@ -66,6 +66,9 @@ install() {
     tar -xzf "$TMP_DIR/$ASSET_NAME" -C "$TMP_DIR"
     
     info "Installing to $INSTALL_DIR..."
+    
+    # Install binary FIRST (before killing old process)
+    # This ensures old agent keeps running if install fails
     if [ -w "$INSTALL_DIR" ]; then
         mv "$TMP_DIR/telfin-agent" "$INSTALL_DIR/$BINARY_NAME"
         chmod +x "$INSTALL_DIR/$BINARY_NAME"
@@ -75,6 +78,16 @@ install() {
     fi
     
     info "Binary installed to $INSTALL_DIR/$BINARY_NAME"
+    
+    # Kill any running telfin processes AFTER successful install
+    # This prevents stale old agents from continuing to run after upgrade
+    if pgrep -x "telfin" > /dev/null 2>&1 || pgrep -x "telfin-agent" > /dev/null 2>&1; then
+        info "Stopping old telfin processes..."
+        pkill -9 -x "telfin" 2>/dev/null || true
+        pkill -9 -x "telfin-agent" 2>/dev/null || true
+        sleep 1
+    fi
+    
     echo ""
 
     # Auto-run setup (login + install service + start)
