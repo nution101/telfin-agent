@@ -341,16 +341,16 @@ pub async fn register_machine(
 }
 
 /// Get a valid access token, automatically refreshing if expired
-/// 
+///
 /// This is the SAFE way to get an access token that:
 /// 1. First checks if stored access token is valid
 /// 2. If expired, tries to refresh using stored refresh token
 /// 3. Only returns error (requiring re-login) if refresh fails
-/// 
+///
 /// IMPORTANT: This function NEVER deletes tokens. Only explicit logout should do that.
 pub async fn get_valid_access_token(server_url: &str) -> Result<String> {
     use std::time::Duration;
-    
+
     // Step 1: Try to get stored access token
     let access_token = match keychain::get_token_async().await? {
         Some(token) => token,
@@ -359,15 +359,15 @@ pub async fn get_valid_access_token(server_url: &str) -> Result<String> {
             return Err(AgentError::NotLoggedIn);
         }
     };
-    
+
     // Step 2: Check if access token is still valid (with 30 second buffer)
     if validate_token_locally(&access_token).is_ok() && !token_expiring_soon(&access_token, 30) {
         tracing::debug!("Access token is valid");
         return Ok(access_token);
     }
-    
+
     tracing::info!("Access token expired or expiring soon, attempting refresh...");
-    
+
     // Step 3: Get refresh token (which has 9 month expiration)
     let refresh_token = match keychain::get_refresh_token_async().await? {
         Some(token) => token,
@@ -376,19 +376,19 @@ pub async fn get_valid_access_token(server_url: &str) -> Result<String> {
             return Err(AgentError::NotLoggedIn);
         }
     };
-    
+
     // Step 4: Try to refresh with exponential backoff
     let mut backoff = Duration::from_secs(1);
     let max_backoff = Duration::from_secs(30);
     let max_attempts = 5;
-    
+
     for attempt in 1..=max_attempts {
         match refresh_access_token(server_url, &refresh_token).await {
             Ok(token_pair) => {
                 // Save new tokens to keychain
                 keychain::save_token_async(token_pair.access_token.clone()).await?;
                 keychain::save_refresh_token_async(token_pair.refresh_token).await?;
-                
+
                 tracing::info!("Token refreshed successfully on attempt {}", attempt);
                 return Ok(token_pair.access_token);
             }
@@ -397,9 +397,13 @@ pub async fn get_valid_access_token(server_url: &str) -> Result<String> {
                     "Token refresh attempt {} failed: {}, {}",
                     attempt,
                     e,
-                    if attempt < max_attempts { "retrying..." } else { "giving up" }
+                    if attempt < max_attempts {
+                        "retrying..."
+                    } else {
+                        "giving up"
+                    }
                 );
-                
+
                 if attempt < max_attempts {
                     tokio::time::sleep(backoff).await;
                     backoff = (backoff * 2).min(max_backoff);
@@ -407,13 +411,13 @@ pub async fn get_valid_access_token(server_url: &str) -> Result<String> {
             }
         }
     }
-    
+
     // All refresh attempts failed - refresh token may be revoked/expired
     // Return error requiring re-login, but DO NOT delete tokens
     // (they may still work if network was temporarily unavailable)
     tracing::error!("All token refresh attempts failed, re-authentication required");
     Err(AgentError::AuthError(
-        "Token refresh failed, please re-authenticate with 'telfin login'".to_string()
+        "Token refresh failed, please re-authenticate with 'telfin login'".to_string(),
     ))
 }
 
@@ -473,17 +477,17 @@ async fn write_pending_auth_request(server_url: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         let _ = tokio::fs::create_dir_all(parent).await;
     }
-    
+
     let content = format!(
         "PENDING_AUTH\nserver={}\ntimestamp={}\n\nRun 'telfin login' to re-authenticate this agent.\n",
         server_url,
         chrono::Utc::now().to_rfc3339()
     );
-    
-    tokio::fs::write(&path, content).await.map_err(|e| {
-        AgentError::Other(format!("Failed to write pending auth: {}", e))
-    })?;
-    
+
+    tokio::fs::write(&path, content)
+        .await
+        .map_err(|e| AgentError::Other(format!("Failed to write pending auth: {}", e)))?;
+
     tracing::warn!("Wrote pending auth request to: {:?}", path);
     Ok(())
 }
@@ -495,12 +499,12 @@ pub async fn clear_pending_auth() {
 }
 
 /// Get a valid access token, automatically re-authenticating if needed
-/// 
+///
 /// This is the SELF-HEALING version that provides fallback layers:
 /// 1. First tries to get/refresh token normally
 /// 2. If refresh fails and we're interactive, triggers device-code flow
 /// 3. If running as daemon, writes pending auth request for later
-/// 
+///
 /// This ensures the agent can recover from token invalidation without
 /// manual intervention (when possible).
 pub async fn get_valid_token_or_reauth(server_url: &str) -> Result<String> {
@@ -515,30 +519,30 @@ pub async fn get_valid_token_or_reauth(server_url: &str) -> Result<String> {
             tracing::warn!("Token retrieval failed: {}", e);
         }
     }
-    
+
     // Layer 2: Token refresh failed - need re-authentication
     if is_daemon_mode() {
         // Running as daemon (systemd/launchd) - can't do interactive auth
         // Write pending auth request for user to resolve
         tracing::error!("Running as daemon, cannot do interactive re-auth");
         write_pending_auth_request(server_url).await?;
-        
+
         // Return error - agent will retry with backoff
         return Err(AgentError::AuthError(
-            "Re-authentication required. Run 'telfin login' to fix.".to_string()
+            "Re-authentication required. Run 'telfin login' to fix.".to_string(),
         ));
     }
-    
+
     // Layer 3: Interactive mode - do device code flow
     tracing::info!("Initiating automatic re-authentication via device code flow...");
     println!("\nSession expired. Starting authentication...\n");
-    
+
     device_code_flow(server_url).await?;
     println!("\n✓ Login successful!\n");
-    
+
     // Clear pending auth and get fresh token
     clear_pending_auth().await;
-    
+
     // Return the fresh token
     keychain::get_token_async()
         .await?

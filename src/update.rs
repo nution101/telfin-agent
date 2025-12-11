@@ -57,20 +57,20 @@ pub async fn check_for_updates_quiet() -> Option<Version> {
 pub async fn auto_update_if_available() -> Result<bool> {
     // Quick check without jitter for startup
     let status = check_for_updates().await?;
-    
+
     if !status.update_available {
         return Ok(false);
     }
-    
+
     tracing::info!(
         "Auto-updating: {} -> {}",
         status.current_version,
         status.latest_version
     );
-    
+
     // Perform the update (this will download and replace the binary)
     perform_update(false).await?;
-    
+
     Ok(true)
 }
 
@@ -160,7 +160,6 @@ fn get_target_identifier() -> Result<&'static str> {
     }
 }
 
-
 /// Get the binary name inside the archive
 fn get_binary_name() -> &'static str {
     if cfg!(windows) {
@@ -191,7 +190,6 @@ pub async fn perform_update(force: bool) -> Result<()> {
     let target_id = get_target_identifier()?;
     let binary_name = get_binary_name();
 
-
     // Get current executable path for backup
     let current_exe = env::current_exe().map_err(|e| {
         AgentError::UpdateError(format!("Cannot determine current executable: {}", e))
@@ -221,7 +219,6 @@ pub async fn perform_update(force: bool) -> Result<()> {
             .bin_name(&binary_name_owned)
             .identifier(&target_id_owned)
             .current_version(CURRENT_VERSION)
-
             .show_download_progress(true)
             .show_output(true)
             .no_confirm(true)

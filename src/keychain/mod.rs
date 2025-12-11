@@ -120,7 +120,7 @@ pub const REFRESH_TOKEN_ACCOUNT: &str = "refresh_token";
 
 // ============================================================================
 // Phase 5: Credential Backup/Recovery
-// 
+//
 // Provides file-based fallback when keychain access fails.
 // Tokens are obfuscated (not truly encrypted) using XOR with machine fingerprint.
 // This is defense-in-depth, not a replacement for proper keychain security.
@@ -160,23 +160,22 @@ fn deobfuscate(data: &[u8], key: &str) -> Option<String> {
 /// Called after successful keychain save
 pub async fn backup_tokens(access_token: &str, refresh_token: &str) -> Result<()> {
     use crate::fingerprint;
-    
-    let fp = fingerprint::generate()
-        .unwrap_or_else(|_| "fallback-key-12345".to_string());
-    
+
+    let fp = fingerprint::generate().unwrap_or_else(|_| "fallback-key-12345".to_string());
+
     let path = backup_tokens_path();
     if let Some(parent) = path.parent() {
         let _ = tokio::fs::create_dir_all(parent).await;
     }
-    
+
     // Format: access_token\nrefresh_token
     let combined = format!("{}\n{}", access_token, refresh_token);
     let obfuscated = obfuscate(&combined, &fp);
-    
-    tokio::fs::write(&path, obfuscated).await.map_err(|e| {
-        AgentError::Other(format!("Failed to backup tokens: {}", e))
-    })?;
-    
+
+    tokio::fs::write(&path, obfuscated)
+        .await
+        .map_err(|e| AgentError::Other(format!("Failed to backup tokens: {}", e)))?;
+
     tracing::debug!("Tokens backed up to {:?}", path);
     Ok(())
 }
@@ -185,24 +184,25 @@ pub async fn backup_tokens(access_token: &str, refresh_token: &str) -> Result<()
 /// Returns (access_token, refresh_token) if successful
 pub async fn recover_tokens() -> Result<(String, String)> {
     use crate::fingerprint;
-    
-    let fp = fingerprint::generate()
-        .unwrap_or_else(|_| "fallback-key-12345".to_string());
-    
+
+    let fp = fingerprint::generate().unwrap_or_else(|_| "fallback-key-12345".to_string());
+
     let path = backup_tokens_path();
-    let data = tokio::fs::read(&path).await.map_err(|e| {
-        AgentError::KeychainError(format!("No backup tokens: {}", e))
-    })?;
-    
+    let data = tokio::fs::read(&path)
+        .await
+        .map_err(|e| AgentError::KeychainError(format!("No backup tokens: {}", e)))?;
+
     let combined = deobfuscate(&data, &fp).ok_or_else(|| {
         AgentError::KeychainError("Failed to deobfuscate backup tokens".to_string())
     })?;
-    
+
     let parts: Vec<&str> = combined.splitn(2, '\n').collect();
     if parts.len() != 2 {
-        return Err(AgentError::KeychainError("Invalid backup format".to_string()));
+        return Err(AgentError::KeychainError(
+            "Invalid backup format".to_string(),
+        ));
     }
-    
+
     tracing::info!("Recovered tokens from backup file");
     Ok((parts[0].to_string(), parts[1].to_string()))
 }
@@ -211,12 +211,12 @@ pub async fn recover_tokens() -> Result<(String, String)> {
 /// Tries keychain first, then backup file if keychain fails
 pub async fn get_tokens_with_fallback() -> Result<(String, String)> {
     // Try keychain first
-    if let (Ok(Some(access)), Ok(Some(refresh))) = 
-        (get_token_async().await, get_refresh_token_async().await) 
+    if let (Ok(Some(access)), Ok(Some(refresh))) =
+        (get_token_async().await, get_refresh_token_async().await)
     {
         return Ok((access, refresh));
     }
-    
+
     tracing::warn!("Keychain failed, trying backup file...");
     recover_tokens().await
 }
@@ -226,4 +226,3 @@ pub async fn clear_backup_tokens() {
     let path = backup_tokens_path();
     let _ = tokio::fs::remove_file(&path).await;
 }
-

@@ -72,7 +72,7 @@ pub fn health_status() -> String {
     let now = now_secs();
     let last_hb = LAST_HEARTBEAT.load(Ordering::Relaxed);
     let last_act = LAST_ACTIVITY.load(Ordering::Relaxed);
-    
+
     format!(
         "heartbeat: {}s ago (timeout: {}s), activity: {}s ago (timeout: {}s), healthy: {}",
         if last_hb > 0 { now - last_hb } else { 0 },
@@ -84,20 +84,20 @@ pub fn health_status() -> String {
 }
 
 /// Spawn a watchdog thread that exits the process if unhealthy
-/// 
+///
 /// This allows systemd/launchd to restart the agent when it becomes
 /// unresponsive. The watchdog checks health every 60 seconds.
 pub fn spawn_watchdog() {
     std::thread::spawn(|| {
         // Wait a bit before first check to allow startup
         std::thread::sleep(Duration::from_secs(60));
-        
+
         let mut consecutive_failures = 0;
         const MAX_FAILURES: u32 = 3; // Exit after 3 consecutive failures
-        
+
         loop {
             std::thread::sleep(Duration::from_secs(60));
-            
+
             if is_healthy() {
                 consecutive_failures = 0;
                 tracing::debug!("Health check passed: {}", health_status());
@@ -109,7 +109,7 @@ pub fn spawn_watchdog() {
                     MAX_FAILURES,
                     health_status()
                 );
-                
+
                 if consecutive_failures >= MAX_FAILURES {
                     tracing::error!(
                         "Health check failed {} times consecutively, forcing restart",
@@ -121,9 +121,12 @@ pub fn spawn_watchdog() {
             }
         }
     });
-    
-    tracing::info!("Health watchdog started (timeout: {}s heartbeat, {}s activity)",
-        HEARTBEAT_TIMEOUT_SECS, ACTIVITY_TIMEOUT_SECS);
+
+    tracing::info!(
+        "Health watchdog started (timeout: {}s heartbeat, {}s activity)",
+        HEARTBEAT_TIMEOUT_SECS,
+        ACTIVITY_TIMEOUT_SECS
+    );
 }
 
 #[cfg(test)]

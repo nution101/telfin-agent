@@ -30,7 +30,6 @@ const MAX_REFRESH_BACKOFF_SECS: u64 = 300;
 #[allow(dead_code)]
 type WsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
-
 /// Main agent that manages the WebSocket connection and PTY sessions
 pub struct Agent {
     config: Config,
@@ -169,7 +168,7 @@ impl Agent {
         // Threshold for considering a connection "successful" - if we were connected
         // for at least this long, reset the backoff on disconnect
         let success_threshold = Duration::from_secs(10);
-        
+
         // Extract gateway host for network checks
         let gateway_host = network::extract_host(&self.config.server_url)
             .unwrap_or_else(|| "gateway.telfin.io".to_string());
@@ -185,7 +184,7 @@ impl Agent {
                     continue;
                 }
             }
-            
+
             // Check and refresh token before connecting
             if let Err(e) = self.ensure_valid_token().await {
                 tracing::error!("Failed to ensure valid token: {}", e);
@@ -202,7 +201,7 @@ impl Agent {
                 }
                 result = self.connect_and_run() => {
                     let connection_duration = result.1;
-                    
+
                     // PERSISTENT SESSIONS: Don't cleanup PTY on disconnect!
                     // We keep the PTY alive so users can reconnect to the same shell.
                     // Only cleanup ephemeral sessions (old non-persistent sessions)
@@ -214,12 +213,12 @@ impl Agent {
                         );
                         self.cleanup_sessions().await;
                     }
-                    
+
                     // Log persistent PTY status
                     if self.persistent_pty.lock().await.is_some() {
                         tracing::info!("Persistent PTY still running - will reattach on reconnect");
                     }
-                    
+
                     match result.0 {
                         Ok(_) => {
                             tracing::info!("Connection closed cleanly after {:?}", connection_duration);
@@ -437,7 +436,7 @@ impl Agent {
     async fn handle_message(&mut self, data: &[u8], tx: mpsc::Sender<WsMessage>) -> Result<()> {
         // Record activity for health monitoring
         health::record_activity();
-        
+
         let msg = Message::decode(data)?;
 
         match msg.msg_type {
@@ -450,14 +449,15 @@ impl Agent {
 
                 // PERSISTENT SESSION: Check if we have an existing PTY to reattach to
                 let persistent_pty = self.persistent_pty.lock().await;
-                
+
                 if let Some(ref pty) = *persistent_pty {
                     // Reattach to existing PTY with new session ID
                     let old_session_id = *pty.current_session_id.lock().await;
                     if old_session_id != msg.session_id {
                         tracing::info!(
                             "Reattaching persistent PTY: {} -> {}",
-                            old_session_id, msg.session_id
+                            old_session_id,
+                            msg.session_id
                         );
                         *pty.current_session_id.lock().await = msg.session_id;
                     }
@@ -466,7 +466,8 @@ impl Agent {
                     // No persistent PTY - create one
                     drop(persistent_pty);
                     tracing::info!("Starting new persistent PTY for session {}", msg.session_id);
-                    self.start_persistent_pty(msg.session_id, tx.clone()).await?;
+                    self.start_persistent_pty(msg.session_id, tx.clone())
+                        .await?;
                 }
 
                 // Check for sub-type in payload
@@ -478,7 +479,11 @@ impl Agent {
                     0x01 => {
                         // Resize event (not yet implemented for persistent PTY)
                         let resize = ResizePayload::decode(&msg.payload)?;
-                        tracing::debug!("Resize event: {}x{} (not applied to persistent PTY)", resize.cols, resize.rows);
+                        tracing::debug!(
+                            "Resize event: {}x{} (not applied to persistent PTY)",
+                            resize.cols,
+                            resize.rows
+                        );
                     }
                     _ => {
                         // Assume raw data if no valid sub-type (backward compatibility)
@@ -525,7 +530,11 @@ impl Agent {
     }
 
     /// Start a new persistent PTY session
-    async fn start_persistent_pty(&mut self, session_id: Uuid, tx: mpsc::Sender<WsMessage>) -> Result<()> {
+    async fn start_persistent_pty(
+        &mut self,
+        session_id: Uuid,
+        tx: mpsc::Sender<WsMessage>,
+    ) -> Result<()> {
         let pty_system = native_pty_system();
 
         let pair = pty_system
@@ -591,25 +600,29 @@ impl Agent {
         let reader_task = tokio::task::spawn_blocking(move || {
             let mut buf = [0u8; 4096];
             let runtime = tokio::runtime::Handle::current();
-            
+
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
                         // Get current session ID (may have changed on reconnect)
-                        let session_id = runtime.block_on(async {
-                            *session_id_for_reader.lock().await
-                        });
-                        
+                        let session_id =
+                            runtime.block_on(async { *session_id_for_reader.lock().await });
+
                         // Prepend sub-type byte for raw terminal data
                         let mut payload = Vec::with_capacity(n + 1);
                         payload.push(DataSubType::RawData as u8);
                         payload.extend_from_slice(&buf[..n]);
 
                         let msg = Message::data(session_id, payload);
-                        if tx_output.blocking_send(WsMessage::Binary(msg.encode())).is_err() {
+                        if tx_output
+                            .blocking_send(WsMessage::Binary(msg.encode()))
+                            .is_err()
+                        {
                             // Channel closed - connection dropped, but keep PTY running
-                            tracing::debug!("Output channel closed, persistent PTY continues running");
+                            tracing::debug!(
+                                "Output channel closed, persistent PTY continues running"
+                            );
                             break;
                         }
                     }
