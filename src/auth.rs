@@ -31,6 +31,7 @@ struct TokenRequest {
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
+#[allow(dead_code)]
 struct TokenResponse {
     access_token: Option<String>,
     refresh_token: Option<String>,

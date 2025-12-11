@@ -127,6 +127,7 @@ pub const REFRESH_TOKEN_ACCOUNT: &str = "refresh_token";
 // ============================================================================
 
 /// Get the backup tokens file path
+#[allow(dead_code)]
 fn backup_tokens_path() -> std::path::PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
@@ -136,6 +137,7 @@ fn backup_tokens_path() -> std::path::PathBuf {
 
 /// Simple XOR obfuscation using machine fingerprint as key
 /// This is NOT encryption - it's just obfuscation to prevent casual reading
+#[allow(dead_code)]
 fn obfuscate(data: &str, key: &str) -> Vec<u8> {
     let key_bytes = key.as_bytes();
     data.as_bytes()
@@ -146,6 +148,7 @@ fn obfuscate(data: &str, key: &str) -> Vec<u8> {
 }
 
 /// Deobfuscate data
+#[allow(dead_code)]
 fn deobfuscate(data: &[u8], key: &str) -> Option<String> {
     let key_bytes = key.as_bytes();
     let bytes: Vec<u8> = data
@@ -158,6 +161,7 @@ fn deobfuscate(data: &[u8], key: &str) -> Option<String> {
 
 /// Backup tokens to file (obfuscated with machine fingerprint)
 /// Called after successful keychain save
+#[allow(dead_code)]
 pub async fn backup_tokens(access_token: &str, refresh_token: &str) -> Result<()> {
     use crate::fingerprint;
 
@@ -182,6 +186,7 @@ pub async fn backup_tokens(access_token: &str, refresh_token: &str) -> Result<()
 
 /// Recover tokens from backup file
 /// Returns (access_token, refresh_token) if successful
+#[allow(dead_code)]
 pub async fn recover_tokens() -> Result<(String, String)> {
     use crate::fingerprint;
 
@@ -209,6 +214,7 @@ pub async fn recover_tokens() -> Result<(String, String)> {
 
 /// Get tokens with fallback to backup file
 /// Tries keychain first, then backup file if keychain fails
+#[allow(dead_code)]
 pub async fn get_tokens_with_fallback() -> Result<(String, String)> {
     // Try keychain first
     if let (Ok(Some(access)), Ok(Some(refresh))) =
@@ -222,6 +228,7 @@ pub async fn get_tokens_with_fallback() -> Result<(String, String)> {
 }
 
 /// Clear backup tokens (call on logout)
+#[allow(dead_code)]
 pub async fn clear_backup_tokens() {
     let path = backup_tokens_path();
     let _ = tokio::fs::remove_file(&path).await;

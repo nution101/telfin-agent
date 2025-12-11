@@ -43,6 +43,7 @@ pub struct Agent {
 }
 
 /// Persistent PTY state that survives tunnel disconnects
+#[allow(dead_code)]
 struct PersistentPty {
     /// Channel to send input to the PTY
     input_tx: mpsc::Sender<Vec<u8>>,
@@ -661,6 +662,7 @@ impl Agent {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn start_session(&mut self, session_id: Uuid, tx: mpsc::Sender<WsMessage>) -> Result<()> {
         let sessions = self.sessions.lock().await;
         if sessions.len() >= MAX_CONCURRENT_SESSIONS {
@@ -808,6 +810,7 @@ impl Agent {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn check_rate_limit(&self) -> Result<()> {
         let mut last_reset = self.last_rate_reset.lock().await;
         let now = std::time::Instant::now();
@@ -829,6 +832,7 @@ impl Agent {
         // Lock released here after both operations complete
     }
 
+    #[allow(dead_code)]
     async fn handle_input(&mut self, session_id: Uuid, data: &[u8]) -> Result<()> {
         self.check_rate_limit().await?;
 
@@ -849,6 +853,7 @@ impl Agent {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn resize_terminal(&mut self, session_id: Uuid, cols: u16, rows: u16) -> Result<()> {
         let sessions = self.sessions.lock().await;
         let session = sessions.get(&session_id).ok_or_else(|| {

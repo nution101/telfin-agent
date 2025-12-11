@@ -8,6 +8,7 @@ use std::net::TcpStream;
 use std::time::Duration;
 
 /// Default gateway host to check for connectivity
+#[allow(dead_code)]
 const DEFAULT_GATEWAY_HOST: &str = "gateway.telfin.io";
 
 /// Check if we can reach a host on port 443 (HTTPS)
@@ -33,6 +34,7 @@ pub fn can_reach_host(host: &str) -> bool {
 }
 
 /// Check if we can reach the default gateway
+#[allow(dead_code)]
 pub fn can_reach_gateway() -> bool {
     can_reach_host(DEFAULT_GATEWAY_HOST)
 }

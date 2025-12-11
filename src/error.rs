@@ -41,6 +41,7 @@ pub enum AgentError {
     SessionError(String),
 
     #[error("Rate limit exceeded")]
+    #[allow(dead_code)]
     RateLimited,
 
     #[error("Connection error: {0}")]
