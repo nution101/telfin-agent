@@ -131,10 +131,11 @@ impl Agent {
                 format!("{}:{}", host, port)
             };
 
-        // Build WebSocket request with Authorization header
+        // Build WebSocket request with Authorization and Fingerprint headers
         let request = tokio_tungstenite::tungstenite::http::Request::builder()
             .uri(&ws_url)
             .header("Authorization", format!("Bearer {}", self.token))
+            .header("X-Telfin-Fingerprint", &self.fingerprint)
             .header(
                 "Sec-WebSocket-Key",
                 tokio_tungstenite::tungstenite::handshake::client::generate_key(),
@@ -362,11 +363,12 @@ impl Agent {
                 format!("{}:{}", host, port)
             };
 
-        // Build WebSocket request with Authorization header
+        // Build WebSocket request with Authorization and Fingerprint headers
         tracing::info!("Connecting to gateway...");
         let request = Request::builder()
             .uri(&ws_url)
             .header("Authorization", format!("Bearer {}", self.token))
+            .header("X-Telfin-Fingerprint", &self.fingerprint)
             .header(
                 "Sec-WebSocket-Key",
                 tokio_tungstenite::tungstenite::handshake::client::generate_key(),
