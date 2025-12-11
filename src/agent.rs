@@ -28,6 +28,7 @@ const MAX_REFRESH_BACKOFF_SECS: u64 = 300;
 #[allow(dead_code)]
 type WsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
+
 /// Main agent that manages the WebSocket connection and PTY sessions
 pub struct Agent {
     config: Config,
@@ -36,6 +37,24 @@ pub struct Agent {
     sessions: Arc<Mutex<HashMap<Uuid, Session>>>,
     message_count: Arc<AtomicUsize>,
     last_rate_reset: Arc<Mutex<std::time::Instant>>,
+    /// Persistent PTY that survives tunnel reconnects
+    persistent_pty: Arc<Mutex<Option<PersistentPty>>>,
+}
+
+/// Persistent PTY state that survives tunnel disconnects
+struct PersistentPty {
+    /// Channel to send input to the PTY
+    input_tx: mpsc::Sender<Vec<u8>>,
+    /// Current session ID (updated on reconnect)
+    current_session_id: Arc<Mutex<Uuid>>,
+    /// The child process (shell)
+    _child: Box<dyn portable_pty::Child + Send + Sync>,
+    /// PTY output reader task
+    reader_task: tokio::task::JoinHandle<()>,
+    /// PTY input writer task  
+    writer_task: tokio::task::JoinHandle<()>,
+    /// Last activity timestamp
+    last_activity: std::time::Instant,
 }
 
 struct Session {
@@ -59,6 +78,7 @@ impl Agent {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             message_count: Arc::new(AtomicUsize::new(0)),
             last_rate_reset: Arc::new(Mutex::new(std::time::Instant::now())),
+            persistent_pty: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -162,16 +182,21 @@ impl Agent {
                 result = self.connect_and_run() => {
                     let connection_duration = result.1;
                     
-                    // CRITICAL: Clean up ALL sessions when connection drops.
-                    // This prevents stale PTY sessions from using old session IDs
-                    // that the gateway can't route back to the browser.
+                    // PERSISTENT SESSIONS: Don't cleanup PTY on disconnect!
+                    // We keep the PTY alive so users can reconnect to the same shell.
+                    // Only cleanup ephemeral sessions (old non-persistent sessions)
                     let session_count = self.sessions.lock().await.len();
                     if session_count > 0 {
                         tracing::info!(
-                            "Connection ended, cleaning up {} active session(s) to prevent stale session IDs",
+                            "Connection ended, cleaning up {} ephemeral session(s) (persistent PTY kept alive)",
                             session_count
                         );
                         self.cleanup_sessions().await;
+                    }
+                    
+                    // Log persistent PTY status
+                    if self.persistent_pty.lock().await.is_some() {
+                        tracing::info!("Persistent PTY still running - will reattach on reconnect");
                     }
                     
                     match result.0 {
@@ -398,32 +423,41 @@ impl Agent {
                     return Ok(());
                 }
 
-                // Check if this is a new session (no existing session with this ID)
-                let sessions = self.sessions.lock().await;
-                let session_exists = sessions.contains_key(&msg.session_id);
-                drop(sessions);
-
-                if !session_exists {
-                    // New session - start it
-                    tracing::info!("Starting new session {}", msg.session_id);
-                    self.start_session(msg.session_id, tx.clone()).await?;
+                // PERSISTENT SESSION: Check if we have an existing PTY to reattach to
+                let persistent_pty = self.persistent_pty.lock().await;
+                
+                if let Some(ref pty) = *persistent_pty {
+                    // Reattach to existing PTY with new session ID
+                    let old_session_id = *pty.current_session_id.lock().await;
+                    if old_session_id != msg.session_id {
+                        tracing::info!(
+                            "Reattaching persistent PTY: {} -> {}",
+                            old_session_id, msg.session_id
+                        );
+                        *pty.current_session_id.lock().await = msg.session_id;
+                    }
+                    drop(persistent_pty);
+                } else {
+                    // No persistent PTY - create one
+                    drop(persistent_pty);
+                    tracing::info!("Starting new persistent PTY for session {}", msg.session_id);
+                    self.start_persistent_pty(msg.session_id, tx.clone()).await?;
                 }
 
                 // Check for sub-type in payload
                 match msg.payload[0] {
                     0x00 => {
                         // Raw terminal data (skip sub-type byte)
-                        self.handle_input(msg.session_id, &msg.payload[1..]).await?;
+                        self.handle_persistent_input(&msg.payload[1..]).await?;
                     }
                     0x01 => {
-                        // Resize event
+                        // Resize event (not yet implemented for persistent PTY)
                         let resize = ResizePayload::decode(&msg.payload)?;
-                        self.resize_terminal(msg.session_id, resize.cols, resize.rows)
-                            .await?;
+                        tracing::debug!("Resize event: {}x{} (not applied to persistent PTY)", resize.cols, resize.rows);
                     }
                     _ => {
                         // Assume raw data if no valid sub-type (backward compatibility)
-                        self.handle_input(msg.session_id, &msg.payload).await?;
+                        self.handle_persistent_input(&msg.payload).await?;
                     }
                 }
             }
@@ -448,6 +482,143 @@ impl Agent {
                 );
             }
         }
+
+        Ok(())
+    }
+
+    /// Handle input for the persistent PTY session
+    async fn handle_persistent_input(&self, data: &[u8]) -> Result<()> {
+        let persistent_pty = self.persistent_pty.lock().await;
+        if let Some(ref pty) = *persistent_pty {
+            pty.input_tx.send(data.to_vec()).await.map_err(|e| {
+                AgentError::SessionError(format!("Failed to send input to PTY: {}", e))
+            })?;
+        } else {
+            tracing::warn!("Received input but no persistent PTY exists");
+        }
+        Ok(())
+    }
+
+    /// Start a new persistent PTY session
+    async fn start_persistent_pty(&mut self, session_id: Uuid, tx: mpsc::Sender<WsMessage>) -> Result<()> {
+        let pty_system = native_pty_system();
+
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| AgentError::PtyError(format!("Failed to open PTY: {}", e)))?;
+
+        // Build shell command based on config
+        let cmd = match &self.config.shell_command {
+            Some(shell_cmd) => {
+                let parts = shell_words::split(shell_cmd).map_err(|e| {
+                    AgentError::ConfigError(format!("Invalid shell_command: {}", e))
+                })?;
+                if parts.is_empty() {
+                    return Err(AgentError::ConfigError("Empty shell_command".to_string()));
+                }
+                let mut cmd = CommandBuilder::new(&parts[0]);
+                for arg in &parts[1..] {
+                    cmd.arg(arg);
+                }
+                tracing::info!("Starting persistent PTY with shell: {}", shell_cmd);
+                cmd
+            }
+            None => {
+                #[cfg(unix)]
+                let default_shell = "/bin/bash";
+                #[cfg(windows)]
+                let default_shell = "cmd.exe";
+                let shell = std::env::var("SHELL").unwrap_or_else(|_| default_shell.to_string());
+                tracing::info!("Starting persistent PTY with default shell: {}", shell);
+                CommandBuilder::new(shell)
+            }
+        };
+
+        let child = pair
+            .slave
+            .spawn_command(cmd)
+            .map_err(|e| AgentError::PtyError(format!("Failed to spawn command: {}", e)))?;
+
+        let mut reader = pair
+            .master
+            .try_clone_reader()
+            .map_err(|e| AgentError::PtyError(format!("Failed to clone reader: {}", e)))?;
+
+        let mut writer = pair
+            .master
+            .take_writer()
+            .map_err(|e| AgentError::PtyError(format!("Failed to get writer: {}", e)))?;
+
+        // Channel for input to PTY
+        let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(1024);
+
+        // Shared session ID that can be updated on reconnect
+        let current_session_id = Arc::new(Mutex::new(session_id));
+        let session_id_for_reader = current_session_id.clone();
+
+        // Spawn task to read PTY output and send to WebSocket with current session ID
+        let tx_output = tx.clone();
+        let reader_task = tokio::task::spawn_blocking(move || {
+            let mut buf = [0u8; 4096];
+            let runtime = tokio::runtime::Handle::current();
+            
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        // Get current session ID (may have changed on reconnect)
+                        let session_id = runtime.block_on(async {
+                            *session_id_for_reader.lock().await
+                        });
+                        
+                        // Prepend sub-type byte for raw terminal data
+                        let mut payload = Vec::with_capacity(n + 1);
+                        payload.push(DataSubType::RawData as u8);
+                        payload.extend_from_slice(&buf[..n]);
+
+                        let msg = Message::data(session_id, payload);
+                        if tx_output.blocking_send(WsMessage::Binary(msg.encode())).is_err() {
+                            // Channel closed - connection dropped, but keep PTY running
+                            tracing::debug!("Output channel closed, persistent PTY continues running");
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Persistent PTY read error: {}", e);
+                        break;
+                    }
+                }
+            }
+            tracing::info!("Persistent PTY reader task exited");
+        });
+
+        // Spawn task to handle input writes
+        let writer_task = tokio::task::spawn_blocking(move || {
+            use std::io::Write;
+            while let Some(data) = input_rx.blocking_recv() {
+                if writer.write_all(&data).is_err() || writer.flush().is_err() {
+                    break;
+                }
+            }
+            tracing::info!("Persistent PTY writer task exited");
+        });
+
+        let persistent_pty = PersistentPty {
+            input_tx,
+            current_session_id,
+            _child: child,
+            reader_task,
+            writer_task,
+            last_activity: std::time::Instant::now(),
+        };
+
+        *self.persistent_pty.lock().await = Some(persistent_pty);
+        tracing::info!("Persistent PTY started with initial session {}", session_id);
 
         Ok(())
     }
