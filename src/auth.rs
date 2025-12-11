@@ -453,7 +453,100 @@ pub fn token_expiring_soon(token: &str, within_secs: u64) -> bool {
     }
 }
 
+/// Path for pending re-authentication requests (daemon mode)
+fn pending_auth_path() -> std::path::PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("telfin")
+        .join("pending_auth.txt")
+}
+
+/// Check if we're running as a daemon (no TTY)
+fn is_daemon_mode() -> bool {
+    // Check if stdout is a TTY - if not, we're likely a daemon
+    !atty::is(atty::Stream::Stdout)
+}
+
+/// Write a pending auth request for later resolution by user
+async fn write_pending_auth_request(server_url: &str) -> Result<()> {
+    let path = pending_auth_path();
+    if let Some(parent) = path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    
+    let content = format!(
+        "PENDING_AUTH\nserver={}\ntimestamp={}\n\nRun 'telfin login' to re-authenticate this agent.\n",
+        server_url,
+        chrono::Utc::now().to_rfc3339()
+    );
+    
+    tokio::fs::write(&path, content).await.map_err(|e| {
+        AgentError::Other(format!("Failed to write pending auth: {}", e))
+    })?;
+    
+    tracing::warn!("Wrote pending auth request to: {:?}", path);
+    Ok(())
+}
+
+/// Clear pending auth request after successful authentication
+pub async fn clear_pending_auth() {
+    let path = pending_auth_path();
+    let _ = tokio::fs::remove_file(&path).await;
+}
+
+/// Get a valid access token, automatically re-authenticating if needed
+/// 
+/// This is the SELF-HEALING version that provides fallback layers:
+/// 1. First tries to get/refresh token normally
+/// 2. If refresh fails and we're interactive, triggers device-code flow
+/// 3. If running as daemon, writes pending auth request for later
+/// 
+/// This ensures the agent can recover from token invalidation without
+/// manual intervention (when possible).
+pub async fn get_valid_token_or_reauth(server_url: &str) -> Result<String> {
+    // Layer 1: Try normal token retrieval/refresh
+    match get_valid_access_token(server_url).await {
+        Ok(token) => {
+            // Clear any pending auth from previous failures
+            clear_pending_auth().await;
+            return Ok(token);
+        }
+        Err(e) => {
+            tracing::warn!("Token retrieval failed: {}", e);
+        }
+    }
+    
+    // Layer 2: Token refresh failed - need re-authentication
+    if is_daemon_mode() {
+        // Running as daemon (systemd/launchd) - can't do interactive auth
+        // Write pending auth request for user to resolve
+        tracing::error!("Running as daemon, cannot do interactive re-auth");
+        write_pending_auth_request(server_url).await?;
+        
+        // Return error - agent will retry with backoff
+        return Err(AgentError::AuthError(
+            "Re-authentication required. Run 'telfin login' to fix.".to_string()
+        ));
+    }
+    
+    // Layer 3: Interactive mode - do device code flow
+    tracing::info!("Initiating automatic re-authentication via device code flow...");
+    println!("\nSession expired. Starting authentication...\n");
+    
+    device_code_flow(server_url).await?;
+    println!("\n✓ Login successful!\n");
+    
+    // Clear pending auth and get fresh token
+    clear_pending_auth().await;
+    
+    // Return the fresh token
+    keychain::get_token_async()
+        .await?
+        .ok_or(AgentError::NotLoggedIn)
+}
+
 #[cfg(test)]
+
 mod tests {
     use super::*;
 

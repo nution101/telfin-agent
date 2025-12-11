@@ -118,23 +118,12 @@ async fn main() -> Result<()> {
                 config.machine_name = name;
             }
 
-            // Get access token - this will automatically refresh if expired
-            // IMPORTANT: Never delete tokens here - only on explicit logout
-            let access_token = match auth::get_valid_access_token(&server).await {
-                Ok(token) => {
-                    tracing::debug!("Got valid access token (may have been refreshed)");
-                    token
-                }
-                Err(_) => {
-                    // Token refresh failed - need to re-authenticate
-                    println!("Session expired. Starting authentication...\n");
-                    auth::device_code_flow(&server).await?;
-                    println!("\n✓ Login successful!\n");
-                    keychain::get_token_async()
-                        .await?
-                        .ok_or(error::AgentError::NotLoggedIn)?
-                }
-            };
+            // Get access token with automatic re-authentication if needed
+            // This uses the self-healing auth function that:
+            // 1. Tries stored token / refresh
+            // 2. Falls back to device-code flow if interactive
+            // 3. Writes pending auth request if daemon mode
+            let access_token = auth::get_valid_token_or_reauth(&server).await?;
 
             // Note: token_expiring_soon check removed - get_valid_access_token handles this
 
@@ -204,21 +193,15 @@ async fn main() -> Result<()> {
             let mut config = config::Config::load()?;
             config.server_url = server.clone();
 
-            // Step 1: Get valid access token (automatically refreshes if expired)
-            // IMPORTANT: Never delete tokens here - only on explicit logout
-            let access_token = match auth::get_valid_access_token(&server).await {
+            // Step 1: Get valid access token (with automatic re-auth if needed)
+            println!("Step 1/4: Checking authentication...");
+            let access_token = match auth::get_valid_token_or_reauth(&server).await {
                 Ok(token) => {
                     println!("Step 1/4: Authenticated ✓\n");
                     token
                 }
-                Err(_) => {
-                    // Token refresh failed - need to authenticate
-                    println!("Step 1/4: Authentication required\n");
-                    auth::device_code_flow(&server).await?;
-                    println!("\n✓ Authentication complete!\n");
-                    keychain::get_token_async()
-                        .await?
-                        .ok_or(error::AgentError::NotLoggedIn)?
+                Err(e) => {
+                    return Err(e);
                 }
             };
 

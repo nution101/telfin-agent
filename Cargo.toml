@@ -1,6 +1,6 @@
 [package]
 name = "telfin-agent"
-version = "0.7.1"
+version = "0.8.0"
 edition = "2021"
 description = "Telfin SSH Tunnel Agent"
 license = "MIT"
@@ -45,6 +45,7 @@ url = "2.5"
 shell-words = "1.1"
 jsonwebtoken = "9.3"
 rand = "0.8"
+atty = "0.2"  # TTY detection for daemon mode
 
 # Self-update from GitHub releases (rustls avoids OpenSSL cross-compilation issues)
 self_update = { version = "0.39", default-features = false, features = ["archive-tar", "archive-zip", "compression-flate2", "rustls"] }
