@@ -58,6 +58,8 @@ pub struct Agent {
     sessions: Arc<Mutex<HashMap<Uuid, Session>>>,
     message_count: Arc<AtomicUsize>,
     last_rate_reset: Arc<Mutex<std::time::Instant>>,
+    /// Secrets/Env vars to inject into sessions
+    env_vars: Arc<Mutex<HashMap<String, String>>>,
     /// Persistent PTY that survives tunnel reconnects
     persistent_pty: Arc<Mutex<Option<PersistentPty>>>,
 }
@@ -100,6 +102,7 @@ impl Agent {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             message_count: Arc::new(AtomicUsize::new(0)),
             last_rate_reset: Arc::new(Mutex::new(std::time::Instant::now())),
+            env_vars: Arc::new(Mutex::new(HashMap::new())),
             persistent_pty: Arc::new(Mutex::new(None)),
         })
     }
@@ -538,6 +541,22 @@ impl Agent {
                 // Version notification from gateway
                 self.handle_version_check(&msg.payload).await;
             }
+            MessageType::Secrets => {
+                // Secrets injection
+                use crate::protocol::SecretsPayload;
+                match serde_json::from_slice::<SecretsPayload>(&msg.payload) {
+                    Ok(secrets) => {
+                        let mut env = self.env_vars.lock().await;
+                        for (k, v) in secrets.env {
+                            env.insert(k, v);
+                        }
+                        tracing::info!("Received and stored {} secrets for future sessions", env.len());
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to parse secrets payload: {}", e);
+                    }
+                }
+            }
         }
 
         Ok(())
@@ -637,6 +656,14 @@ impl Agent {
                 for arg in &parts[1..] {
                     cmd.arg(arg);
                 }
+                
+                // Inject secrets
+                let env = self.env_vars.lock().await;
+                for (k, v) in env.iter() {
+                    cmd.env(k, v);
+                }
+                drop(env);
+
                 tracing::info!("Starting persistent PTY with shell: {}", shell_cmd);
                 cmd
             }
@@ -647,7 +674,16 @@ impl Agent {
                 let default_shell = "cmd.exe";
                 let shell = std::env::var("SHELL").unwrap_or_else(|_| default_shell.to_string());
                 tracing::info!("Starting persistent PTY with default shell: {}", shell);
-                CommandBuilder::new(shell)
+                let mut cmd = CommandBuilder::new(shell);
+                
+                // Inject secrets
+                let env = self.env_vars.lock().await;
+                for (k, v) in env.iter() {
+                    cmd.env(k, v);
+                }
+                drop(env);
+                
+                cmd
             }
         };
 

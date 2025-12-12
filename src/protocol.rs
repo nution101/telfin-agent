@@ -17,6 +17,8 @@ pub enum MessageType {
     Error = 0x05,
     /// Version check notification from gateway
     VersionCheck = 0x20,
+    /// Secrets injection (gateway -> agent)
+    Secrets = 0x30,
 }
 
 impl MessageType {
@@ -28,6 +30,7 @@ impl MessageType {
             0x04 => Some(MessageType::Pong),
             0x05 => Some(MessageType::Error),
             0x20 => Some(MessageType::VersionCheck),
+            0x30 => Some(MessageType::Secrets),
             _ => None,
         }
     }
@@ -170,6 +173,12 @@ pub enum DataSubType {
 pub struct ResizePayload {
     pub cols: u16,
     pub rows: u16,
+}
+
+/// Secrets payload
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SecretsPayload {
+    pub env: std::collections::HashMap<String, String>,
 }
 
 impl ResizePayload {
