@@ -72,14 +72,25 @@ async fn main() -> Result<()> {
         .install_default()
         .expect("Failed to install rustls crypto provider");
 
-    // Initialize logging
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
-
     let cli = Cli::parse();
+
+    // Initialize logging based on command
+    // Interactive commands (login, install, status) should be quiet
+    // Daemon mode (start) needs full logging for debugging
+    let log_level = match &cli.command {
+        Commands::Start { .. } => {
+            // Daemon mode - full logging
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
+        }
+        _ => {
+            // Interactive commands - errors only (unless RUST_LOG is set)
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("error"))
+        }
+    };
+
+    tracing_subscriber::fmt()
+        .with_env_filter(log_level)
+        .init();
 
     match cli.command {
         Commands::Login { server } => {

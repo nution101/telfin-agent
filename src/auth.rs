@@ -405,9 +405,16 @@ pub async fn get_valid_access_token(server_url: &str) -> Result<String> {
     let max_backoff = Duration::from_secs(30);
     let max_attempts = 5;
 
+    // Show simple progress for interactive mode
+    use std::io::{self, Write};
+    print!("Refreshing session");
+    let _ = io::stdout().flush();
+
     for attempt in 1..=max_attempts {
         match refresh_access_token(server_url, &refresh_token).await {
             Ok(token_pair) => {
+                println!(" ✓");
+
                 // Save new tokens to keychain
                 keychain::save_token_async(token_pair.access_token.clone()).await?;
                 keychain::save_refresh_token_async(token_pair.refresh_token.clone()).await?;
@@ -421,6 +428,9 @@ pub async fn get_valid_access_token(server_url: &str) -> Result<String> {
                 return Ok(token_pair.access_token);
             }
             Err(e) => {
+                print!(".");
+                let _ = io::stdout().flush();
+
                 tracing::warn!(
                     "Token refresh attempt {} failed: {}, {}",
                     attempt,
@@ -439,6 +449,7 @@ pub async fn get_valid_access_token(server_url: &str) -> Result<String> {
             }
         }
     }
+    println!();
 
     // All refresh attempts failed - refresh token may be revoked/expired
     // Return error requiring re-login, but DO NOT delete tokens
