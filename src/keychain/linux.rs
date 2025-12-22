@@ -1,5 +1,7 @@
 use crate::error::{AgentError, Result};
-use crate::keychain::{KeychainProvider, ACCOUNT_NAME, REFRESH_TOKEN_ACCOUNT, SERVICE_NAME};
+use crate::keychain::{
+    KeychainProvider, ACCOUNT_NAME, AGENT_TOKEN_ACCOUNT, REFRESH_TOKEN_ACCOUNT, SERVICE_NAME,
+};
 
 #[cfg(target_os = "linux")]
 use secret_service::blocking::SecretService;
@@ -28,6 +30,14 @@ impl LinuxKeychain {
         let mut attributes = HashMap::new();
         attributes.insert("service", SERVICE_NAME);
         attributes.insert("account", REFRESH_TOKEN_ACCOUNT);
+        attributes
+    }
+
+    #[cfg(target_os = "linux")]
+    fn get_agent_token_attributes() -> HashMap<&'static str, &'static str> {
+        let mut attributes = HashMap::new();
+        attributes.insert("service", SERVICE_NAME);
+        attributes.insert("account", AGENT_TOKEN_ACCOUNT);
         attributes
     }
 }
@@ -290,6 +300,133 @@ impl KeychainProvider for LinuxKeychain {
 
     #[cfg(not(target_os = "linux"))]
     fn delete_refresh_token(&self) -> Result<()> {
+        Err(AgentError::KeychainError(
+            "Not implemented for this platform".to_string(),
+        ))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn save_agent_token(&self, token: &str) -> Result<()> {
+        let ss = SecretService::connect(EncryptionType::Dh).map_err(|e| {
+            AgentError::KeychainError(format!("Failed to connect to secret service: {}", e))
+        })?;
+
+        let collection = ss.get_default_collection().map_err(|e| {
+            AgentError::KeychainError(format!("Failed to get default collection: {}", e))
+        })?;
+
+        if collection.is_locked().unwrap_or(false) {
+            collection.unlock().map_err(|e| {
+                AgentError::KeychainError(format!("Failed to unlock collection: {}", e))
+            })?;
+        }
+
+        let attributes = Self::get_agent_token_attributes();
+
+        // Delete existing item if present
+        if let Ok(items) = collection.search_items(attributes.clone()) {
+            for item in items {
+                let _ = item.delete();
+            }
+        }
+
+        collection
+            .create_item(
+                "Telfin Agent Token",
+                attributes,
+                token.as_bytes(),
+                true,
+                "text/plain",
+            )
+            .map_err(|e| {
+                AgentError::KeychainError(format!("Failed to save agent token: {}", e))
+            })?;
+
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn get_agent_token(&self) -> Result<Option<String>> {
+        let ss = SecretService::connect(EncryptionType::Dh).map_err(|e| {
+            AgentError::KeychainError(format!("Failed to connect to secret service: {}", e))
+        })?;
+
+        let collection = ss.get_default_collection().map_err(|e| {
+            AgentError::KeychainError(format!("Failed to get default collection: {}", e))
+        })?;
+
+        if collection.is_locked().unwrap_or(false) {
+            collection.unlock().map_err(|e| {
+                AgentError::KeychainError(format!("Failed to unlock collection: {}", e))
+            })?;
+        }
+
+        let attributes = Self::get_agent_token_attributes();
+
+        let items = collection
+            .search_items(attributes)
+            .map_err(|e| AgentError::KeychainError(format!("Failed to search items: {}", e)))?;
+
+        if let Some(item) = items.first() {
+            let secret = item
+                .get_secret()
+                .map_err(|e| AgentError::KeychainError(format!("Failed to get secret: {}", e)))?;
+
+            let token = String::from_utf8(secret.to_vec()).map_err(|e| {
+                AgentError::KeychainError(format!("Invalid agent token encoding: {}", e))
+            })?;
+
+            Ok(Some(token))
+        } else {
+            Ok(None)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn delete_agent_token(&self) -> Result<()> {
+        let ss = SecretService::connect(EncryptionType::Dh).map_err(|e| {
+            AgentError::KeychainError(format!("Failed to connect to secret service: {}", e))
+        })?;
+
+        let collection = ss.get_default_collection().map_err(|e| {
+            AgentError::KeychainError(format!("Failed to get default collection: {}", e))
+        })?;
+
+        if collection.is_locked().unwrap_or(false) {
+            collection.unlock().map_err(|e| {
+                AgentError::KeychainError(format!("Failed to unlock collection: {}", e))
+            })?;
+        }
+
+        let attributes = Self::get_agent_token_attributes();
+
+        if let Ok(items) = collection.search_items(attributes) {
+            for item in items {
+                item.delete().map_err(|e| {
+                    AgentError::KeychainError(format!("Failed to delete item: {}", e))
+                })?;
+            }
+        }
+
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn save_agent_token(&self, _token: &str) -> Result<()> {
+        Err(AgentError::KeychainError(
+            "Not implemented for this platform".to_string(),
+        ))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn get_agent_token(&self) -> Result<Option<String>> {
+        Err(AgentError::KeychainError(
+            "Not implemented for this platform".to_string(),
+        ))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn delete_agent_token(&self) -> Result<()> {
         Err(AgentError::KeychainError(
             "Not implemented for this platform".to_string(),
         ))

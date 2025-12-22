@@ -46,6 +46,46 @@ pub fn is_installed() -> bool {
     }
 }
 
+/// Check if the service is currently running
+pub fn is_running() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let output = Command::new("systemctl")
+            .args(["--user", "is-active", "telfin-agent"])
+            .output();
+        matches!(output, Ok(o) if o.status.success())
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // Check if launchd job is running by looking for the process
+        let output = Command::new("pgrep")
+            .args(["-f", "telfin.*start"])
+            .output();
+        matches!(output, Ok(o) if o.status.success())
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // Check if telfin process is running
+        let output = Command::new("tasklist")
+            .args(["/fi", "imagename eq telfin.exe"])
+            .output();
+        match output {
+            Ok(o) if o.status.success() => {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                stdout.contains("telfin.exe")
+            }
+            _ => false,
+        }
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        false
+    }
+}
+
 /// Start the installed service
 pub fn start_service() -> Result<()> {
     #[cfg(target_os = "linux")]
@@ -194,9 +234,9 @@ Restart=always
 RestartSec=10
 
 # Self-healing: Limit restart rate to prevent tight loops
-# Maximum 5 restarts within 5 minutes
-StartLimitIntervalSec=300
-StartLimitBurst=5
+# More forgiving rate limiting: 100 restarts within 1 hour
+StartLimitIntervalSec=3600
+StartLimitBurst=100
 
 # Environment for logging
 Environment="RUST_LOG=info"

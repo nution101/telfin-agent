@@ -120,25 +120,40 @@ async fn main() -> Result<()> {
                 config.machine_name = name;
             }
 
-            // Get access token with automatic re-authentication if needed
-            // This uses the self-healing auth function that:
-            // 1. Tries stored token / refresh
-            // 2. Falls back to device-code flow if interactive
-            // 3. Writes pending auth request if daemon mode
-            let access_token = auth::get_valid_token_or_reauth(&server).await?;
+            // Try to get stored agent token first
+            let agent_token = match keychain::get_agent_token_async().await? {
+                Some(token) => {
+                    tracing::info!("Using stored agent token");
+                    token
+                }
+                None => {
+                    // No stored agent token, need to register
+                    tracing::info!("No stored agent token, registering machine...");
 
-            // Note: token_expiring_soon check removed - get_valid_access_token handles this
+                    // Get access token with automatic re-authentication if needed
+                    // This uses the self-healing auth function that:
+                    // 1. Tries stored token / refresh
+                    // 2. Falls back to device-code flow if interactive
+                    // 3. Writes pending auth request if daemon mode
+                    let access_token = auth::get_valid_token_or_reauth(&server).await?;
 
-            // Register machine with gateway to get agent token
-            let registration =
-                auth::register_machine(&server, &access_token, &config.machine_name).await?;
+                    // Register machine with gateway to get agent token
+                    let registration =
+                        auth::register_machine(&server, &access_token, &config.machine_name)
+                            .await?;
+
+                    // Save agent token to keychain for future use
+                    keychain::save_agent_token_async(registration.agent_token.clone()).await?;
+
+                    registration.agent_token
+                }
+            };
 
             // Generate device fingerprint
             let fingerprint = fingerprint::generate()?;
 
             // Create and run agent with agent token (not access token)
-            let mut agent =
-                agent::Agent::new(config.clone(), registration.agent_token, fingerprint)?;
+            let mut agent = agent::Agent::new(config.clone(), agent_token, fingerprint)?;
 
             // Check for updates in background if enabled
             if config.auto_update_check {
@@ -183,6 +198,8 @@ async fn main() -> Result<()> {
         Commands::Logout => {
             keychain::delete_token_async().await?;
             keychain::delete_refresh_token_async().await?;
+            keychain::delete_agent_token_async().await?;
+            keychain::clear_backup_tokens().await;
             println!("✓ Logged out successfully");
             Ok(())
         }
@@ -211,6 +228,10 @@ async fn main() -> Result<()> {
             println!("Step 2/4: Verifying gateway connection...");
             let registration =
                 auth::register_machine(&server, &access_token, &config.machine_name).await?;
+
+            // Save agent token to keychain for future use
+            keychain::save_agent_token_async(registration.agent_token.clone()).await?;
+
             let fp = fingerprint::generate()?;
 
             // Quick connection test
@@ -274,35 +295,98 @@ async fn main() -> Result<()> {
 }
 
 async fn check_status() -> Result<()> {
-    let token = keychain::get_token_async().await?;
+    let config = config::Config::load()?;
+    let fingerprint = fingerprint::generate()?;
 
-    if let Some(token) = token {
-        let config = config::Config::load()?;
-        let fingerprint = fingerprint::generate()?;
+    println!("Server: {}", config.server_url);
+    println!("Machine: {}", config.machine_name);
+    println!("Fingerprint: {}", &fingerprint[..16]);
 
-        println!("Status: Logged in");
-        println!("Server: {}", config.server_url);
-        println!("Machine: {}", config.machine_name);
-        println!("Fingerprint: {}", &fingerprint[..16]);
+    // Check service status
+    let service_running = service::is_running();
+    println!(
+        "Service: {}",
+        if service_running {
+            "Running ✓"
+        } else {
+            "Not running"
+        }
+    );
 
-        // Show token expiration info
-        if let Ok(claims) = auth::validate_token_locally(&token) {
+    // Check agent token (most important - used for WebSocket connection)
+    let agent_token = keychain::get_agent_token_async().await?;
+    if let Some(ref token) = agent_token {
+        if let Ok(claims) = auth::validate_token_locally(token) {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs() as usize;
             let remaining = claims.exp.saturating_sub(now);
-            let hours = remaining / 3600;
-            let minutes = (remaining % 3600) / 60;
-
-            println!("Token expires in: {}h {}m", hours, minutes);
-
-            if auth::token_expiring_soon(&token, 300) {
-                println!("⚠ Warning: Token expiring soon. Run 'telfin login' to refresh.");
+            let days = remaining / 86400;
+            let years = days / 365;
+            if years > 0 {
+                println!("Agent Token: Valid ({} years remaining) ✓", years);
+            } else {
+                println!("Agent Token: Valid ({} days remaining) ✓", days);
             }
         } else {
-            println!("Token status: Invalid or expired");
-            println!("Run 'telfin login' to authenticate again");
+            println!("Agent Token: Expired (will re-register on next connect)");
+        }
+    } else {
+        println!("Agent Token: Not registered yet");
+    }
+
+    // Check refresh token (used to get new access tokens)
+    let refresh_token = keychain::get_refresh_token_async().await?;
+    if let Some(ref token) = refresh_token {
+        if let Ok(claims) = auth::validate_token_locally(token) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as usize;
+            let remaining = claims.exp.saturating_sub(now);
+            let days = remaining / 86400;
+            println!("Refresh Token: Valid ({} days remaining) ✓", days);
+        } else {
+            println!("Refresh Token: Expired");
+            println!("  → Run 'telfin login' to re-authenticate");
+        }
+    } else {
+        println!("Refresh Token: Not found");
+        println!("  → Run 'telfin login' to authenticate");
+    }
+
+    // Check access token (short-lived, auto-refreshes)
+    let access_token = keychain::get_token_async().await?;
+    if let Some(ref token) = access_token {
+        if let Ok(claims) = auth::validate_token_locally(token) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as usize;
+            let remaining = claims.exp.saturating_sub(now);
+            let minutes = remaining / 60;
+            println!("Access Token: Valid ({} min remaining)", minutes);
+        } else {
+            // Access token expired is normal - it auto-refreshes
+            if refresh_token.is_some() {
+                println!("Access Token: Expired (will auto-refresh)");
+            } else {
+                println!("Access Token: Expired");
+            }
+        }
+    } else {
+        println!("Access Token: Not found");
+    }
+
+    // Overall status
+    println!();
+    if agent_token.is_some() && service_running {
+        println!("Status: Connected ✓");
+    } else if agent_token.is_some() || refresh_token.is_some() {
+        println!("Status: Authenticated (service not running)");
+        if !service_running {
+            println!("  → Run 'telfin install' to start the service");
         }
     } else {
         println!("Status: Not logged in");

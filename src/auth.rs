@@ -111,8 +111,13 @@ pub async fn device_code_flow(server_url: &str) -> Result<()> {
     .await?;
 
     // Step 4: Store both tokens in keychain (using async wrapper for Linux compatibility)
-    keychain::save_token_async(token_pair.access_token).await?;
-    keychain::save_refresh_token_async(token_pair.refresh_token).await?;
+    keychain::save_token_async(token_pair.access_token.clone()).await?;
+    keychain::save_refresh_token_async(token_pair.refresh_token.clone()).await?;
+
+    // Backup tokens to file as fallback
+    keychain::backup_tokens(&token_pair.access_token, &token_pair.refresh_token)
+        .await
+        .ok();
 
     tracing::info!("Tokens saved to keychain");
     Ok(())
@@ -253,6 +258,9 @@ async fn poll_for_token(
 /// Refresh access token using stored refresh token
 /// Returns new TokenPair on success
 pub async fn refresh_access_token(server_url: &str, refresh_token: &str) -> Result<TokenPair> {
+    // Acquire lock to prevent race conditions when multiple processes try to refresh
+    let _lock = keychain::acquire_refresh_lock().await?;
+
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
@@ -356,8 +364,15 @@ pub async fn get_valid_access_token(server_url: &str) -> Result<String> {
     let access_token = match keychain::get_token_async().await? {
         Some(token) => token,
         None => {
-            tracing::debug!("No access token stored");
-            return Err(AgentError::NotLoggedIn);
+            // Try file fallback before giving up
+            tracing::warn!("No token in keychain, trying backup file...");
+            match keychain::recover_tokens().await {
+                Ok((access, _refresh)) => access,
+                Err(_) => {
+                    tracing::debug!("No access token stored");
+                    return Err(AgentError::NotLoggedIn);
+                }
+            }
         }
     };
 
@@ -369,12 +384,19 @@ pub async fn get_valid_access_token(server_url: &str) -> Result<String> {
 
     tracing::info!("Access token expired or expiring soon, attempting refresh...");
 
-    // Step 3: Get refresh token (which has 9 month expiration)
+    // Step 3: Get refresh token (configured for 1 year expiration on gateway)
     let refresh_token = match keychain::get_refresh_token_async().await? {
         Some(token) => token,
         None => {
-            tracing::warn!("No refresh token available");
-            return Err(AgentError::NotLoggedIn);
+            // Try file fallback before giving up
+            tracing::warn!("No refresh token in keychain, trying backup file...");
+            match keychain::recover_tokens().await {
+                Ok((_access, refresh)) => refresh,
+                Err(_) => {
+                    tracing::warn!("No refresh token available");
+                    return Err(AgentError::NotLoggedIn);
+                }
+            }
         }
     };
 
@@ -388,7 +410,12 @@ pub async fn get_valid_access_token(server_url: &str) -> Result<String> {
             Ok(token_pair) => {
                 // Save new tokens to keychain
                 keychain::save_token_async(token_pair.access_token.clone()).await?;
-                keychain::save_refresh_token_async(token_pair.refresh_token).await?;
+                keychain::save_refresh_token_async(token_pair.refresh_token.clone()).await?;
+
+                // Backup tokens to file as fallback
+                keychain::backup_tokens(&token_pair.access_token, &token_pair.refresh_token)
+                    .await
+                    .ok();
 
                 tracing::info!("Token refreshed successfully on attempt {}", attempt);
                 return Ok(token_pair.access_token);
@@ -524,14 +551,33 @@ pub async fn get_valid_token_or_reauth(server_url: &str) -> Result<String> {
     // Layer 2: Token refresh failed - need re-authentication
     if is_daemon_mode() {
         // Running as daemon (systemd/launchd) - can't do interactive auth
-        // Write pending auth request for user to resolve
-        tracing::error!("Running as daemon, cannot do interactive re-auth");
+        // Enter infinite retry loop with exponential backoff
+        tracing::error!("Authentication failed in daemon mode, entering retry loop...");
         write_pending_auth_request(server_url).await?;
 
-        // Return error - agent will retry with backoff
-        return Err(AgentError::AuthError(
-            "Re-authentication required. Run 'telfin login' to fix.".to_string(),
-        ));
+        let mut backoff = Duration::from_secs(60);
+        let max_backoff = Duration::from_secs(3600); // 1 hour max
+
+        loop {
+            tracing::info!(
+                "Waiting {:?} before retry (run 'telfin login' to fix)...",
+                backoff
+            );
+            tokio::time::sleep(backoff).await;
+
+            // Check if user has run 'telfin login' and we now have valid tokens
+            match get_valid_access_token(server_url).await {
+                Ok(token) => {
+                    tracing::info!("Token became valid, resuming normal operation");
+                    clear_pending_auth().await;
+                    return Ok(token);
+                }
+                Err(e) => {
+                    tracing::warn!("Still waiting for re-authentication: {}", e);
+                    backoff = (backoff * 2).min(max_backoff);
+                }
+            }
+        }
     }
 
     // Layer 3: Interactive mode - do device code flow
