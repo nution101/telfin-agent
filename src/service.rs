@@ -446,8 +446,29 @@ fn install_windows_service() -> Result<()> {
     // Get the path to the current executable
     let exe_path = std::env::current_exe()?;
 
-    // Create scheduled task using schtasks
-    let task_command = format!("{} start", exe_path.display());
+    // Create telfin data directory
+    let data_dir = dirs::data_local_dir()
+        .ok_or_else(|| AgentError::Other("Cannot find local app data directory".to_string()))?
+        .join("telfin");
+    fs::create_dir_all(&data_dir)?;
+
+    // Create a VBScript launcher that runs the agent completely hidden
+    // This is the only reliable way to run a console app without a visible window on Windows
+    let vbs_path = data_dir.join("telfin-launcher.vbs");
+    let vbs_content = format!(
+        r#"Set WshShell = CreateObject("WScript.Shell")
+WshShell.Run """{}""" & " start --no-update", 0, False"#,
+        exe_path.display().to_string().replace("\\", "\\\\")
+    );
+    fs::write(&vbs_path, vbs_content)?;
+
+    // Create scheduled task that runs the VBS launcher (hidden) at logon
+    let task_command = format!("wscript.exe \"{}\"", vbs_path.display());
+
+    // Remove existing task first (ignore errors)
+    let _ = Command::new("schtasks")
+        .args(["/delete", "/tn", "TelfinAgent", "/f"])
+        .output();
 
     let output = Command::new("schtasks")
         .args([
@@ -471,17 +492,21 @@ fn install_windows_service() -> Result<()> {
         )));
     }
 
-    println!("\n✓ Telfin agent installed as Windows scheduled task");
-    println!("\nTask commands:");
-    println!("  Start now:   schtasks /run /tn TelfinAgent");
-    println!("  Stop:        taskkill /f /im telfin.exe");
-    println!("  Status:      schtasks /query /tn TelfinAgent");
+    println!("\n✓ Telfin agent installed as background service");
+    println!("\nService commands:");
+    println!("  telfin status    - Check connection status");
+    println!("  telfin uninstall - Remove background service");
 
     Ok(())
 }
 
 #[cfg(target_os = "windows")]
 fn uninstall_windows_service() -> Result<()> {
+    // Kill running process first
+    let _ = Command::new("taskkill")
+        .args(["/f", "/im", "telfin-agent.exe"])
+        .output();
+
     // Delete the scheduled task
     let output = Command::new("schtasks")
         .args(["/delete", "/tn", "TelfinAgent", "/f"])
@@ -490,12 +515,18 @@ fn uninstall_windows_service() -> Result<()> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         // Don't error if task doesn't exist
-        if !stderr.contains("cannot find") {
+        if !stderr.contains("cannot find") && !stderr.contains("does not exist") {
             return Err(AgentError::Other(format!(
                 "Failed to delete scheduled task: {}",
                 stderr
             )));
         }
+    }
+
+    // Clean up VBS launcher
+    if let Some(data_dir) = dirs::data_local_dir() {
+        let vbs_path = data_dir.join("telfin").join("telfin-launcher.vbs");
+        let _ = fs::remove_file(vbs_path);
     }
 
     println!("✓ Telfin agent uninstalled");
