@@ -69,7 +69,9 @@ jobs:
         shell: pwsh
         run: |
           cd target/${{ matrix.target }}/release
-          Compress-Archive -Path telfin-agent.exe -DestinationPath ../../../${{ matrix.name }}.zip
+          # Use 7zip with explicit DEFLATE compression (not Deflate64)
+          # PowerShell's Compress-Archive uses Deflate64 which self_update doesn't support
+          7z a -tzip -mm=Deflate ../../../${{ matrix.name }}.zip telfin-agent.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
