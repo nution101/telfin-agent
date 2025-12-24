@@ -73,9 +73,12 @@ struct PersistentPty {
     current_session_id: Arc<Mutex<Uuid>>,
     /// The child process (shell)
     _child: Box<dyn portable_pty::Child + Send + Sync>,
+    /// PTY master - MUST be kept alive or the PTY closes (especially on Windows)
+    /// On Windows with ConPTY, dropping the master closes the pseudo-console
+    _master: Box<dyn portable_pty::MasterPty + Send>,
     /// PTY output reader task
     reader_task: tokio::task::JoinHandle<()>,
-    /// PTY input writer task  
+    /// PTY input writer task
     writer_task: tokio::task::JoinHandle<()>,
     /// Last activity timestamp
     last_activity: std::time::Instant,
@@ -87,6 +90,8 @@ struct Session {
     input_tx: mpsc::Sender<Vec<u8>>,
     resize_tx: mpsc::Sender<(u16, u16)>,
     _child: Box<dyn portable_pty::Child + Send + Sync>,
+    /// PTY master - MUST be kept alive or the PTY closes (especially on Windows)
+    _master: Box<dyn portable_pty::MasterPty + Send>,
     reader_task: tokio::task::JoinHandle<()>,
     writer_task: tokio::task::JoinHandle<()>,
     last_activity: std::time::Instant,
@@ -766,6 +771,7 @@ impl Agent {
             input_tx,
             current_session_id,
             _child: child,
+            _master: pair.master,  // Keep master alive - dropping it closes the PTY on Windows!
             reader_task,
             writer_task,
             last_activity: std::time::Instant::now(),
@@ -914,6 +920,7 @@ impl Agent {
             input_tx,
             resize_tx,
             _child: child,
+            _master: pair.master,  // Keep master alive - dropping it closes the PTY on Windows!
             reader_task,
             writer_task,
             last_activity: std::time::Instant::now(),

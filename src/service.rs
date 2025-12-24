@@ -446,34 +446,26 @@ fn install_windows_service() -> Result<()> {
     // Get the path to the current executable
     let exe_path = std::env::current_exe()?;
 
-    // Get data directory for launcher script
-    let data_dir = dirs::data_local_dir()
-        .ok_or_else(|| AgentError::Other("Cannot find local app data directory".to_string()))?
-        .join("telfin");
-    fs::create_dir_all(&data_dir)?;
-
-    // Create a PowerShell launcher script
-    // This script runs the agent hidden and handles the ConPTY requirement
-    let launcher_path = data_dir.join("telfin-launcher.ps1");
-    let launcher_content = format!(
-        r#"# Telfin Agent Launcher - runs agent with hidden window but active console for ConPTY
-& '{}' start --no-update
-"#,
-        exe_path.display().to_string().replace("'", "''")
-    );
-    fs::write(&launcher_path, launcher_content)?;
-
-    // Create the scheduled task using schtasks command line
-    // Use PowerShell with -WindowStyle Hidden to hide the window but keep console for ConPTY
-    let task_command = format!(
-        "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{}\"",
-        launcher_path.display()
-    );
+    // IMPORTANT: Do NOT use VBScript with windowstyle 0 - it runs completely detached
+    // without any console, which breaks Windows ConPTY (needed for PTY/terminal support).
+    //
+    // PowerShell with -WindowStyle Hidden allocates a console but hides the window,
+    // which allows ConPTY to work correctly for PTY sessions.
+    //
+    // Reference: https://devblogs.microsoft.com/commandline/windows-command-line-introducing-the-windows-pseudo-console-conpty/
 
     // Remove existing task first (ignore errors)
     let _ = Command::new("schtasks")
         .args(["/delete", "/tn", "TelfinAgent", "/f"])
         .output();
+
+    // Build the command - use PowerShell to launch with hidden window
+    // The -WindowStyle Hidden parameter hides the window but keeps the console
+    // which is required for ConPTY to create PTY sessions
+    let task_command = format!(
+        "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command \"& '{}' start --no-update\"",
+        exe_path.display()
+    );
 
     // Create basic task with schtasks
     let output = Command::new("schtasks")
