@@ -217,7 +217,7 @@ pub async fn perform_update(force: bool) -> Result<()> {
             .repo_owner(GITHUB_OWNER)
             .repo_name(GITHUB_REPO)
             .bin_name(&binary_name_owned)
-            .identifier(&target_id_owned)
+            .target(&target_id_owned)  // Use .target() to override the default Rust target
             .current_version(CURRENT_VERSION)
             .show_download_progress(true)
             .show_output(true)
