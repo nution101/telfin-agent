@@ -188,7 +188,7 @@ async fn main() -> Result<()> {
             }
 
             // Handle graceful shutdown
-            let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+            let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
 
             tokio::spawn(async move {
                 if let Err(e) = tokio::signal::ctrl_c().await {
@@ -199,7 +199,99 @@ async fn main() -> Result<()> {
                 }
             });
 
-            agent.run(shutdown_rx).await?;
+            // Aggressive reconnection loop - never give up
+            let mut backoff = std::time::Duration::from_secs(1);
+            let max_backoff = std::time::Duration::from_secs(60);
+            let mut consecutive_failures = 0;
+
+            loop {
+                // Check for shutdown before connecting
+                if *shutdown_rx.borrow() {
+                    tracing::info!("Shutdown requested, exiting");
+                    break;
+                }
+
+                // Re-read agent token in case it was refreshed
+                let current_agent_token = match keychain::get_agent_token_async().await {
+                    Ok(Some(token)) => token,
+                    Ok(None) => {
+                        tracing::error!("Agent token missing, cannot reconnect");
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to get agent token: {}", e);
+                        break;
+                    }
+                };
+
+                // Regenerate fingerprint (in case network changed)
+                let current_fingerprint = match fingerprint::generate() {
+                    Ok(fp) => fp,
+                    Err(e) => {
+                        tracing::error!("Failed to generate fingerprint: {}", e);
+                        tokio::time::sleep(backoff).await;
+                        backoff = (backoff * 2).min(max_backoff);
+                        continue;
+                    }
+                };
+
+                let mut agent = match agent::Agent::new(
+                    config.clone(),
+                    current_agent_token,
+                    current_fingerprint,
+                ) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        tracing::error!("Failed to create agent: {}", e);
+                        tokio::time::sleep(backoff).await;
+                        backoff = (backoff * 2).min(max_backoff);
+                        continue;
+                    }
+                };
+
+                // Create a new receiver for this run
+                let run_shutdown_rx = shutdown_rx.clone();
+
+                match agent.run(run_shutdown_rx).await {
+                    Ok(()) => {
+                        // Graceful shutdown
+                        if *shutdown_rx.borrow() {
+                            tracing::info!("Agent stopped gracefully");
+                            break;
+                        }
+                        // Server closed connection, reconnect
+                        tracing::info!("Connection closed, reconnecting...");
+                        consecutive_failures = 0;
+                        backoff = std::time::Duration::from_secs(1);
+                    }
+                    Err(e) => {
+                        consecutive_failures += 1;
+                        tracing::warn!(
+                            "Agent disconnected (attempt {}): {}. Reconnecting in {:?}...",
+                            consecutive_failures,
+                            e,
+                            backoff
+                        );
+                    }
+                }
+
+                // Wait before reconnecting (unless shutdown)
+                tokio::select! {
+                    _ = tokio::time::sleep(backoff) => {}
+                    _ = shutdown_rx.changed() => {
+                        if *shutdown_rx.borrow() {
+                            tracing::info!("Shutdown during reconnect wait");
+                            break;
+                        }
+                    }
+                }
+
+                // Exponential backoff with reset on success
+                if consecutive_failures > 0 {
+                    backoff = (backoff * 2).min(max_backoff);
+                }
+            }
+
             Ok(())
         }
         Commands::Status => {

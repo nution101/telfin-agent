@@ -527,7 +527,9 @@ impl Agent {
                 let _ = tx.send(WsMessage::Binary(pong.encode())).await;
             }
             MessageType::Pong => {
-                // Heartbeat response received
+                // Heartbeat response received - record for health monitoring
+                health::record_heartbeat();
+                tracing::trace!("Received heartbeat pong from gateway");
             }
             MessageType::Error => {
                 let error_msg = String::from_utf8_lossy(&msg.payload);

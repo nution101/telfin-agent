@@ -446,44 +446,105 @@ fn install_windows_service() -> Result<()> {
     // Get the path to the current executable
     let exe_path = std::env::current_exe()?;
 
-    // Create telfin data directory
+    // Get data directory for task XML
     let data_dir = dirs::data_local_dir()
         .ok_or_else(|| AgentError::Other("Cannot find local app data directory".to_string()))?
         .join("telfin");
     fs::create_dir_all(&data_dir)?;
 
-    // Create a VBScript launcher that runs the agent completely hidden
-    // This is the only reliable way to run a console app without a visible window on Windows
-    let vbs_path = data_dir.join("telfin-launcher.vbs");
-    let vbs_content = format!(
-        r#"Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run """{}""" & " start --no-update", 0, False"#,
-        exe_path.display().to_string().replace("\\", "\\\\")
+    // PowerShell command that runs the agent with a hidden window
+    // Unlike VBScript with windowstyle 0, PowerShell -WindowStyle Hidden still
+    // maintains a console (just hidden), which allows ConPTY to spawn shells
+    let ps_command = format!(
+        "& '{}' start --no-update",
+        exe_path.display()
     );
-    fs::write(&vbs_path, vbs_content)?;
 
-    // Create scheduled task that runs the VBS launcher (hidden) at logon
-    let task_command = format!("wscript.exe \"{}\"", vbs_path.display());
+    // Create XML task definition for better control over restart behavior
+    // schtasks /create doesn't support all restart options, so we use XML
+    let task_xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Telfin SSH Tunnel Agent - connects this machine to Telfin</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>true</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <DisallowStartOnRemoteAppSession>false</DisallowStartOnRemoteAppSession>
+    <UseUnifiedSchedulingEngine>true</UseUnifiedSchedulingEngine>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>999</Count>
+    </RestartOnFailure>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>powershell.exe</Command>
+      <Arguments>-WindowStyle Hidden -Command "{}"</Arguments>
+    </Exec>
+  </Actions>
+</Task>"#,
+        ps_command.replace("\"", "&quot;")
+    );
+
+    // Write XML to temp file (must be UTF-16 for schtasks)
+    let xml_path = data_dir.join("telfin-task.xml");
+
+    // Write as UTF-16 LE with BOM
+    use std::io::Write;
+    let mut file = std::fs::File::create(&xml_path)?;
+    file.write_all(&[0xFF, 0xFE])?; // UTF-16 LE BOM
+    for ch in task_xml.encode_utf16() {
+        file.write_all(&ch.to_le_bytes())?;
+    }
+    drop(file);
 
     // Remove existing task first (ignore errors)
     let _ = Command::new("schtasks")
         .args(["/delete", "/tn", "TelfinAgent", "/f"])
         .output();
 
+    // Create task from XML
     let output = Command::new("schtasks")
         .args([
             "/create",
             "/tn",
             "TelfinAgent",
-            "/tr",
-            &task_command,
-            "/sc",
-            "onlogon",
-            "/rl",
-            "highest",
-            "/f", // Force overwrite if exists
+            "/xml",
+            xml_path.to_str().unwrap(),
+            "/f",
         ])
         .output()?;
+
+    // Clean up XML file
+    let _ = fs::remove_file(&xml_path);
 
     if !output.status.success() {
         return Err(AgentError::Other(format!(
@@ -493,6 +554,8 @@ WshShell.Run """{}""" & " start --no-update", 0, False"#,
     }
 
     println!("\n✓ Telfin agent installed as background service");
+    println!("  - Auto-starts on login");
+    println!("  - Auto-restarts on failure (every 1 minute, up to 999 times)");
     println!("\nService commands:");
     println!("  telfin status    - Check connection status");
     println!("  telfin uninstall - Remove background service");
@@ -521,12 +584,6 @@ fn uninstall_windows_service() -> Result<()> {
                 stderr
             )));
         }
-    }
-
-    // Clean up VBS launcher
-    if let Some(data_dir) = dirs::data_local_dir() {
-        let vbs_path = data_dir.join("telfin").join("telfin-launcher.vbs");
-        let _ = fs::remove_file(vbs_path);
     }
 
     println!("✓ Telfin agent uninstalled");
